@@ -22,9 +22,15 @@ class SubprocessMonitor:
         callback: callable = None,
         finished_callback: callable = None,
         cwd: str = None,
+        echo_match: str = None,
     ):
+        """
+        :param echo_match: also print output lines matching this regex to the
+        console, e.g. prompts the user must act on
+        """
         self.commands = commands
         self.cwd = cwd
+        self.echo_match = echo_match
         start_time = time.strftime("%Y%m%d_%H%M%S")
         self.name = name
         self.logger = logging.getLogger(name)
@@ -58,6 +64,8 @@ class SubprocessMonitor:
         print(f"Subprocess {self.name} started with PID {self.process.pid}.")
         for line in iter(self.process.stdout.readline, ""):
             self.logger.info(line.strip())
+            if self.echo_match and re.search(self.echo_match, line):
+                print(f"\033[1;33m{line.strip()}\033[0m", flush=True)
             if re.search(self.ready_match, line):
                 self.ready_line = line
                 self.logger.info("Subprocess is ready.")

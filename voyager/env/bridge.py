@@ -25,6 +25,10 @@ class VoyagerEnv(gym.Env):
         mc_host="localhost",
         mc_version=None,
         bot_username="bot",
+        bot_auth="offline",
+        bot_auth_cache_dir=None,
+        cheats=True,
+        bot_chat_to_server=None,
         server_host="http://127.0.0.1",
         server_port=3000,
         request_timeout=600,
@@ -40,6 +44,17 @@ class VoyagerEnv(gym.Env):
           join the LAN world you open in it
         :param mc_version: Minecraft version to connect with; None detects it
         from the server
+        :param bot_auth: "offline" (no account; needs an offline-mode server) or
+        "microsoft" (the bot logs in to its own Minecraft account; the first
+        connection prints a link and code to sign in, then the login is cached)
+        :param bot_username: the bot's player name; with "microsoft" auth only a
+        label for the cached login (the account's name is used in game)
+        :param bot_auth_cache_dir: where Microsoft logins are cached
+        :param cheats: True lets the bot use operator commands (/give, /tp,
+        /tick freeze, game rules) to reset and recover; False makes it play as
+        a normal survival player that never uses commands
+        :param bot_chat_to_server: send the bot's progress messages to the
+        server chat; defaults to cheats
         """
         modes = [m for m in (mc_port, azure_login, minecraft_server) if m]
         if not modes:
@@ -55,6 +70,12 @@ class VoyagerEnv(gym.Env):
         self.mc_host = mc_host
         self.mc_version = mc_version
         self.bot_username = bot_username
+        self.bot_auth = bot_auth
+        self.bot_auth_cache_dir = bot_auth_cache_dir or (
+            os.path.expanduser("~/.voyager/auth") if bot_auth == "microsoft" else None
+        )
+        self.cheats = cheats
+        self.bot_chat_to_server = bot_chat_to_server
         self.azure_login = None if minecraft_server else azure_login
         self.server = f"{server_host}:{server_port}"
         self.server_port = server_port
@@ -67,6 +88,7 @@ class VoyagerEnv(gym.Env):
             U.f_mkdir(self.log_path, "minecraft")
             self.mc_server = MinecraftServer(
                 bot_username=bot_username,
+                op_bot=cheats,
                 log_path=U.f_join(self.log_path, "minecraft"),
                 **minecraft_server,
             )
@@ -92,6 +114,7 @@ class VoyagerEnv(gym.Env):
             name="mineflayer",
             ready_match=r"Server started on port (\d+)",
             log_path=U.f_join(self.log_path, "mineflayer"),
+            echo_match=r"\[voyager-auth\]|Spawned as",
         )
 
     def get_mc_instance(self):
@@ -176,12 +199,25 @@ class VoyagerEnv(gym.Env):
 
         if options.get("inventory", {}) and options.get("mode", "hard") != "hard":
             raise RuntimeError("inventory can only be set when options is hard")
+        if not self.cheats:
+            # a normal player cannot clear, give, teleport or spread; keep
+            # whatever the bot has and wherever it is
+            options = {
+                k: v
+                for k, v in options.items()
+                if k not in ("inventory", "equipment", "position", "spread")
+            }
+            options["mode"] = "soft"
 
         self.reset_options = {
             "host": self.mc_host,
             "port": self.mc_port,
             "version": self.mc_version,
             "username": self.bot_username,
+            "auth": self.bot_auth,
+            "authCacheDir": self.bot_auth_cache_dir,
+            "cheats": self.cheats,
+            "chatToServer": self.bot_chat_to_server,
             "reset": options.get("mode", "hard"),
             "inventory": options.get("inventory", {}),
             "equipment": options.get("equipment", []),

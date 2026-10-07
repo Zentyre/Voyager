@@ -109,6 +109,31 @@ Claude requests opt into Anthropic's server-side fallback: if a safety classifie
 ### Skill retrieval
 Skills and cached questions are retrieved by embedding similarity. With an OpenAI key, Voyager uses OpenAI's `text-embedding-3-small`; without one it falls back to a local keyword-based index, so Voyager runs with only an Anthropic key. Choose explicitly with `embedding_provider="openai"` or `"local"`. The index is rebuilt automatically from `skills.json` when the embedding model changes, so the bundled skill libraries load either way.
 
+### Playing as a normal player on a server
+By default the bot is an operator. It uses commands to reset its inventory, unstick itself, freeze the world while the model thinks, and so on. To have it play like any other survival player instead, for example on a server you share with others, turn cheats off. To join an online-mode server, give it its own Minecraft account:
+
+```python
+voyager = Voyager(
+    mc_host="your.server.address",
+    mc_port=25565,
+    bot_auth="microsoft",          # log in to the bot's own Minecraft account
+    bot_username="bot-account",    # any label for the cached login
+    cheats=False,                  # play as a normal player, no operator commands
+)
+voyager.learn()
+```
+
+On the first connection, the console prints a link (microsoft.com/link) and a code. Sign in there with the bot's account. The login is then cached in `~/.voyager/auth`, so later runs connect without asking. The bot doesn't need to be an operator.
+
+What changes with `cheats=False`:
+- **No commands at all.** If the model's code tries one, the bot refuses and tells the model it has no commands.
+- **The starting inventory is whatever the account already has.** Nothing is cleared or given, and the bot isn't teleported.
+- **The world doesn't pause** while the model thinks. The bot stands still in the meantime, so at night it can be attacked. Time, weather and difficulty are left to the server.
+- **Deaths drop items** unless the server has `keep_inventory` on. The bot respawns at its bed or the world spawn.
+- **It picks up its own blocks.** Crafting tables and furnaces it places during a task are mined back afterwards. Blocks that were already there, like other players' blocks, are left alone, and the model is told not to break or take from other players' builds.
+- **Its messages stay off the server chat.** The bot's progress messages only go to Voyager's log; pass `bot_chat_to_server=True` to show them in chat.
+- **It stays connected between tasks** instead of rejoining after each one.
+
 ## What's new in this version
 - **Modern Minecraft:** mineflayer 4.39 with Minecraft 26.1 support, plus opt-in [unreleased 26.3 support](#optional-minecraft-263-unreleased). Game-rule names follow 1.21.11's snake_case renames, and old versions still get the old names.
 - **No mods or Microsoft login needed:** Voyager can run its own vanilla dedicated server. Pausing the world while the model thinks uses vanilla `/tick freeze` instead of the Multiplayer Server Pause mod, and the bot's respawn point follows it with `/spawnpoint` instead of the Better Respawn mod.
@@ -119,6 +144,7 @@ Skills and cached questions are retrieved by embedding similarity. With an OpenA
   - *Proven skills rank higher.* Each skill counts how often later skills build on it, and retrieval favors skills that have been reused.
   - *A better-informed critic.* The critic also sees the bot's chat log, so it can verify tasks that leave no trace in the inventory, such as killing a mob.
   - *Version awareness.* The agents are told which Minecraft version they are playing, so they only suggest blocks and items that exist in it.
+- **Normal-player mode:** `cheats=False` plays without operator commands, and `bot_auth="microsoft"` lets the bot join online-mode servers with its own account.
 
 # Resume from a checkpoint during learning
 

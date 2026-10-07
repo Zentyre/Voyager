@@ -37,7 +37,7 @@ There are many reasons that may cause this problem. You can try with following s
    
 ## I saw the bot left and rejoin the game after each task.
 
-After completing each task, we'll reset the environment, which means the bot will exit and rejoin the game. This reset is necessary to synchronize Mineflayer with the Minecraft game. We do this because certain commands we utilize might result in lag on the Mineflayer side, causing the inventory stored in Mineflayer to differ from the actual inventory in the game. However, if you wish to avoid the reset, you can use `voyager.learn(reset_env=False)` and consider increasing the `env_wait_ticks` value. This will provide Mineflayer with additional time to sync with the Minecraft game.
+With cheats on (the default), after completing each task, we'll reset the environment, which means the bot will exit and rejoin the game. With `cheats=False` the bot stays connected. This reset is necessary to synchronize Mineflayer with the Minecraft game. We do this because certain commands we utilize might result in lag on the Mineflayer side, causing the inventory stored in Mineflayer to differ from the actual inventory in the game. However, if you wish to avoid the reset, you can use `voyager.learn(reset_env=False)` and consider increasing the `env_wait_ticks` value. This will provide Mineflayer with additional time to sync with the Minecraft game.
 
 
 ## How to show the bot's first-person view?

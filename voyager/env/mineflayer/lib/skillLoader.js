@@ -61,8 +61,20 @@ function inject(bot) {
     bot._chat = bot.chat;
     bot.chat = (message) => {
         // action_count.chat++;
+        const isCommand = message.startsWith("/");
+        if (isCommand && !bot.voyagerCheats) {
+            // tell the agent instead of sending a command it has no rights for
+            bot.emit(
+                "chatEvent",
+                "bot",
+                `Cannot use ${message.split(" ")[0]}: I am a normal player without commands.`
+            );
+            return;
+        }
         bot.emit("chatEvent", "bot", message);
-        bot._chat(message);
+        // skills report progress with bot.chat; keep it out of a shared
+        // server's chat unless asked
+        if (isCommand || bot.voyagerChatToServer) bot._chat(message);
     };
 
     bot.inventoryUsed = () => {

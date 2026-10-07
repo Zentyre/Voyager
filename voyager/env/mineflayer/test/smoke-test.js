@@ -70,6 +70,7 @@ async function main() {
     const mcPort = await freePort();
     const apiPort = await freePort();
     const commands = [];
+    const chats = [];
 
     const server = mc.createServer({
         "online-mode": false,
@@ -79,6 +80,7 @@ async function main() {
     server.on("playerJoin", (client) => {
         client.on("chat_command", (p) => commands.push("/" + p.command));
         client.on("chat_command_signed", (p) => commands.push("/" + p.command));
+        client.on("chat_message", (p) => chats.push(p.message));
         const login = { ...registry.loginPacket, entityId: 0 };
         client.write("login", login);
         client.write("map_chunk", chunkPacket());
@@ -178,6 +180,38 @@ async function main() {
             `missing /spawnpoint; got ${commands.join(" | ")}`
         );
         console.log(`commands ok: ${commands.join(" | ")}`);
+
+        // normal player: no commands, and no chat sent to the server
+        const sentBefore = commands.length;
+        const chatsBefore = chats.length;
+        const normal = await post(base, "start", {
+            port: mcPort,
+            version,
+            reset: "hard",
+            cheats: false,
+            inventory: { diamond: 64 },
+            waitTicks: 5,
+        });
+        assert.strictEqual(normal.status, 200, JSON.stringify(normal.body));
+        assert.strictEqual((await post(base, "pause")).status, 200);
+        assert.strictEqual((await post(base, "unpause")).status, 200);
+        const normalStep = await post(base, "step", {
+            code: 'bot.chat("/give @s diamond 64"); bot.chat("progress report");',
+            programs,
+        });
+        assert.strictEqual(normalStep.status, 200, JSON.stringify(normalStep.body));
+        const log = JSON.parse(normalStep.body)
+            .filter(([type]) => type === "onChat")
+            .map(([, e]) => e.onChat)
+            .join(" ");
+        assert(log.includes("Cannot use /give"), `no refusal in chat log: ${log}`);
+        assert(log.includes("progress report"), `chat log missing message: ${log}`);
+        await post(base, "stop");
+        await new Promise((r) => setTimeout(r, 500));
+        const extra = commands.slice(sentBefore);
+        assert.deepStrictEqual(extra, [], `normal player sent commands: ${extra.join(" | ")}`);
+        assert.strictEqual(chats.length, chatsBefore, "normal player chatted on the server");
+        console.log("normal player: no commands or server chat sent");
         console.log(`SMOKE TEST PASSED for Minecraft ${version}`);
     } catch (err) {
         console.error("bridge output:\n" + bridgeOut.slice(-3000));

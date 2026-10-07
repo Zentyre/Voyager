@@ -24,6 +24,11 @@ class Voyager:
         minecraft_server: Dict = None,
         mc_host: str = "localhost",
         mc_version: str = None,
+        bot_username: str = "bot",
+        bot_auth: str = "offline",
+        bot_auth_cache_dir: str = None,
+        cheats: bool = True,
+        bot_chat_to_server: bool = None,
         server_port: int = 3000,
         anthropic_api_key: str = None,
         openai_api_key: str = None,
@@ -74,6 +79,17 @@ class Voyager:
         :param minecraft_server: run a vanilla dedicated server; dict of
         MinecraftServer options, e.g. {"version": "26.1", "accept_eula": True}
         :param mc_host: host of the server when using mc_port
+        :param bot_username: the bot's player name (with bot_auth="microsoft",
+        just a label for the cached login)
+        :param bot_auth: "offline" or "microsoft"; with "microsoft" the bot logs
+        in to its own Minecraft account and can join online-mode servers
+        :param bot_auth_cache_dir: where Microsoft logins are cached
+        (default ~/.voyager/auth)
+        :param cheats: True (default) lets the bot use operator commands to
+        reset its inventory, unstick itself, freeze the world while the model
+        thinks, etc. False makes it play as a normal survival player
+        :param bot_chat_to_server: send the bot's progress messages to the
+        server chat (default: only when cheats is on)
         :param mc_version: Minecraft version to connect with; None detects it
         :param server_port: mineflayer port
         :param anthropic_api_key: Anthropic API key; defaults to ANTHROPIC_API_KEY
@@ -135,11 +151,21 @@ class Voyager:
             minecraft_server=minecraft_server,
             mc_host=mc_host,
             mc_version=mc_version,
+            bot_username=bot_username,
+            bot_auth=bot_auth,
+            bot_auth_cache_dir=bot_auth_cache_dir,
+            cheats=cheats,
+            bot_chat_to_server=bot_chat_to_server,
             server_port=server_port,
             request_timeout=env_request_timeout,
         )
         self.env_wait_ticks = env_wait_ticks
-        self.reset_placed_if_failed = reset_placed_if_failed
+        self.cheats = cheats
+        if reset_placed_if_failed and not cheats:
+            print(
+                "\033[33mreset_placed_if_failed needs cheats; ignoring it\033[0m"
+            )
+        self.reset_placed_if_failed = reset_placed_if_failed and cheats
         self.max_iterations = max_iterations
 
         if anthropic_api_key:
@@ -160,6 +186,7 @@ class Voyager:
             resume=resume,
             chat_log=action_agent_show_chat_log,
             execution_error=action_agent_show_execution_error,
+            cheats=cheats,
         )
         self.action_agent_task_max_retries = action_agent_task_max_retries
         self.curriculum_agent = CurriculumAgent(
@@ -224,7 +251,9 @@ class Voyager:
         self.action_agent_rollout_num_iter = 0
         self.task = task
         self.context = context
-        if reset_env:
+        # Reconnecting resyncs the bot after commands change its inventory;
+        # a normal player uses no commands, so it stays connected.
+        if reset_env and self.cheats:
             self.env.reset(
                 options={
                     "mode": "soft",
@@ -235,10 +264,13 @@ class Voyager:
             "easy" if len(self.curriculum_agent.completed_tasks) > 15 else "peaceful"
         )
         # step to peek an observation
-        events = self.env.step(
-            "bot.chat(`/time set ${getNextTime()}`);\n"
-            + f"bot.chat('/difficulty {difficulty}');"
-        )
+        if self.cheats:
+            events = self.env.step(
+                "bot.chat(`/time set ${getNextTime()}`);\n"
+                + f"bot.chat('/difficulty {difficulty}');"
+            )
+        else:
+            events = self.env.step("")
         skills = self.skill_manager.retrieve_skills(query=self.context)
         print(
             f"\033[33mRender Action Agent system message with {len(skills)} skills\033[0m"

@@ -51,9 +51,11 @@ def observation(inventory=None, chat=None):
 class FakeEnv:
     def __init__(self):
         self.steps = []
+        self.resets = []
         self.inventory = {}
 
     def reset(self, options=None):
+        self.resets.append(options)
         return observation(self.inventory)
 
     def step(self, code, programs=""):
@@ -369,6 +371,58 @@ class TestLearningLoop(LLMTestCase):
         self.assertEqual(len(lessons), 1)
         self.assertEqual(lessons[0]["task"], "Craft 1 crafting table")
         self.assertTrue(any("craftItem" in s for s in voyager.env.steps))
+
+
+class TestNormalPlayerMode(LLMTestCase):
+    def test_learn_without_cheats_uses_no_commands_or_reconnects(self):
+        from voyager import Voyager
+
+        voyager = Voyager(
+            mc_port=25565,
+            cheats=False,
+            embedding_provider="local",
+            ckpt_dir=self.tmp,
+            max_iterations=2,
+        )
+        voyager.env = FakeEnv()
+        voyager.learn()
+        self.assertFalse(any("/" in step for step in voyager.env.steps))
+        # one connect at the start, no reconnect before each task
+        self.assertEqual(len(voyager.env.resets), 1)
+        system = voyager.action_agent.render_system_message().content
+        self.assertIn("Chat commands (anything starting with /) are not available", system)
+
+    def test_env_reset_never_clears_or_teleports_a_normal_player(self):
+        from voyager.env import VoyagerEnv
+
+        env = VoyagerEnv(
+            mc_port=25565, mc_host="example.org", cheats=False, bot_auth="microsoft",
+            log_path=self.tmp,
+        )
+        with mock.patch.object(env, "check_process", return_value="[]"), \
+                mock.patch.object(env.mineflayer, "stop"):
+            env.reset(options={
+                "mode": "hard", "inventory": {"diamond": 1},
+                "position": {"x": 0, "y": 0, "z": 0}, "spread": True,
+            })
+        opts = env.reset_options
+        self.assertEqual(opts["reset"], "soft")
+        self.assertEqual(opts["inventory"], {})
+        self.assertIsNone(opts["position"])
+        self.assertFalse(opts["spread"])
+        self.assertFalse(opts["cheats"])
+        self.assertEqual(opts["auth"], "microsoft")
+        self.assertEqual(opts["host"], "example.org")
+        self.assertTrue(opts["authCacheDir"].endswith(os.path.join(".voyager", "auth")))
+
+    def test_dedicated_server_does_not_op_normal_player(self):
+        from voyager.env.minecraft_server import MinecraftServer
+
+        server = MinecraftServer(server_dir=self.tmp, op_bot=False, ops=["me"],
+                                 log_path=self.tmp)
+        server._write_ops()
+        with open(f"{server.server_dir}/ops.json") as f:
+            self.assertEqual([op["name"] for op in json.load(f)], ["me"])
 
 
 if __name__ == "__main__":

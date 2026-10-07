@@ -47,7 +47,9 @@ Join any world that is already running:
 voyager = Voyager(mc_port=PORT)
 ```
 
-For a server on another machine, also pass `mc_host="SERVER_ADDRESS"`. The server must accept offline-mode players (the bot has no Microsoft account) and the bot (named `bot`) must be an operator.
+For a server on another machine, also pass `mc_host="SERVER_ADDRESS"`. By default the bot joins without an account, so the server must be in offline mode, and the bot (named `bot`) must be an operator.
+
+To join an online-mode server as a regular player instead, give the bot its own Minecraft account and turn cheats off: `bot_auth="microsoft", cheats=False`. See [Playing as a normal player on a server](../README.md#playing-as-a-normal-player-on-a-server).
 
 ## Option 3: Microsoft Azure login (`azure_login`)
 

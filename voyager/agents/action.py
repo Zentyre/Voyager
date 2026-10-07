@@ -20,8 +20,10 @@ class ActionAgent:
         resume=False,
         chat_log=True,
         execution_error=True,
+        cheats=True,
     ):
         self.ckpt_dir = ckpt_dir
+        self.cheats = cheats
         self.chat_log = chat_log
         self.execution_error = execution_error
         U.f_mkdir(f"{ckpt_dir}/action")
@@ -87,11 +89,17 @@ class ActionAgent:
         ]
         programs = "\n\n".join(load_control_primitives_context(base_skills) + skills)
         response_format = load_prompt("action_response_format")
-        return SystemMessage(
-            content=system_template.format(
-                programs=programs, response_format=response_format
-            )
+        content = system_template.format(
+            programs=programs, response_format=response_format
         )
+        if not self.cheats:
+            content += (
+                "\n\nYou are playing as a normal survival player on a server, "
+                "possibly with other people. Chat commands (anything starting "
+                "with /) are not available. Do not break, take from or "
+                "destroy blocks, chests or builds that other players made."
+            )
+        return SystemMessage(content=content)
 
     def render_human_message(
         self, *, events, code="", task="", context="", critique="", lessons=""

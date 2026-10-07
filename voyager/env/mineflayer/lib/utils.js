@@ -41,13 +41,22 @@ const gameruleName = (bot, name) => {
     return name;
 };
 
-const setGameRule = (bot, name, value) => {
-    bot.chat(`/gamerule ${gameruleName(bot, name)} ${value}`);
+// Send an operator command. In normal-player mode (bot.voyagerCheats false)
+// the bot has no operator rights, so nothing is sent and false is returned.
+// Uses the raw chat sender so the command is not echoed into the chat log.
+const runCommand = (bot, command) => {
+    if (!bot.voyagerCheats) return false;
+    (bot._chat || bot.chat)(command);
+    return true;
 };
+
+const setGameRule = (bot, name, value) =>
+    runCommand(bot, `/gamerule ${gameruleName(bot, name)} ${value}`);
 
 module.exports = {
     initCounter,
     getNextTime,
     gameruleName,
+    runCommand,
     setGameRule,
 };

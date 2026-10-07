@@ -64,6 +64,7 @@ class MinecraftServer:
         port=25565,
         accept_eula=False,
         bot_username="bot",
+        op_bot=True,
         ops=(),
         memory="4G",
         java="java",
@@ -78,7 +79,8 @@ class MinecraftServer:
         :param port: server port
         :param accept_eula: set True to accept the Minecraft EULA
         (https://aka.ms/MinecraftEULA); the server will not start otherwise
-        :param bot_username: the bot's player name, made an operator
+        :param bot_username: the bot's player name
+        :param op_bot: make the bot an operator; False for a normal player
         :param ops: extra player names to make operators, e.g. your own
         :param memory: Java heap size for the server
         :param java: path to the java executable
@@ -91,7 +93,7 @@ class MinecraftServer:
         self.port = port
         self.accept_eula = accept_eula
         self.bot_username = bot_username
-        self.ops = [bot_username, *ops]
+        self.ops = [bot_username, *ops] if op_bot else list(ops)
         self.memory = memory
         self.java = java
         self.level_seed = level_seed
