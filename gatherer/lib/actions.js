@@ -71,7 +71,7 @@ function installActions(ctx) {
                 .findBlocks({
                     matching: harvestable.map((b) => b.id),
                     maxDistance: config.searchRadius,
-                    count: 64,
+                    count: spawnProtected ? 4096 : 64, // the nearest may all be in spawn protection
                 })
                 .filter((p) => !skipped.has(p.toString()) && !isProtected(p) && !learn.isUnreachable(p))
                 .filter((p) => !ctx.crew?.claimedByOther(`block:${p}`));
@@ -163,8 +163,12 @@ function installActions(ctx) {
     // later, and one that disagrees about the dig time puts the block back. So
     // wait for the server's word, and dig again if the block is still there.
     let warnedServerDig = false;
+    let spawnProtected = false; // the server refused a block near the world spawn
     async function digBlock(block) {
         const pos = block.position;
+        if (bot.game?.gameMode === "adventure") {
+            throw new Error(`I'm in adventure mode, which can't break blocks. Put me in survival: /gamemode survival ${bot.username}`);
+        }
         for (let attempt = 0; attempt < 3; attempt++) {
             ctx.checkStop();
             const verdict = serverVerdict(pos);
@@ -177,6 +181,19 @@ function installActions(ctx) {
             }
             const result = await verdict.after(4000);
             if (result === "broken") return;
+            if (bot.blockAt(pos)?.type !== block.type) bot.world.setBlockStateId(pos, block.stateId);
+            if (nearSpawn(pos)) {
+                if (!spawnProtected) {
+                    spawnProtected = true;
+                    const sp = bot.spawnPoint;
+                    ctx.log(
+                        `The server won't let me break blocks near the world spawn (${sp.x} ${sp.z}): that's spawn ` +
+                            `protection. I'll work at least 17 blocks away from it. (Ops aren't affected, or set ` +
+                            `spawn-protection=0 in server.properties.)`
+                    );
+                }
+                throw new Error("inside spawn protection");
+            }
             if (!warnedServerDig) {
                 warnedServerDig = true;
                 ctx.log(
@@ -185,25 +202,29 @@ function installActions(ctx) {
                         : `The server hasn't confirmed breaking the ${block.name} (is it lagging?); digging it again.`
                 );
             }
-            // Undo mineflayer's guess so the world matches the server again.
-            if (bot.blockAt(pos)?.type !== block.type) bot.world.setBlockStateId(pos, block.stateId);
             block = bot.blockAt(pos);
             if (!block || block.type === 0) return;
         }
         throw new Error(`the server wouldn't let me break the ${block.name}`);
     }
 
+    // Vanilla spawn protection covers 16 blocks around the world spawn (a square).
+    function nearSpawn(pos) {
+        const sp = bot.spawnPoint;
+        return Boolean(sp) && Math.max(Math.abs(pos.x - sp.x), Math.abs(pos.z - sp.z)) <= 16;
+    }
+
     // Watches the server's block updates for `pos`: "broken" once it reports
-    // air, "kept" if it reports the block again after we finished digging,
-    // "silent" if it says nothing within `ms` after we finished.
+    // air, "kept" if it reports the block (a refusal often comes right as we
+    // start digging), "silent" if it says nothing within `ms` after we finished.
     function serverVerdict(pos) {
         const client = bot._client;
         let result = null;
-        let finished = false;
+        let sawBlock = false;
         let wake = null;
         const seen = (stateId) => {
             if (stateId === 0 || bot.registry.blocksByStateId[stateId]?.name?.endsWith("air")) result = "broken";
-            else if (finished && !result) result = "kept";
+            else if (!result) sawBlock = true;
             if (result && wake) wake();
         };
         const onChange = (packet) => {
@@ -228,11 +249,10 @@ function installActions(ctx) {
             cancel,
             after: (ms) =>
                 new Promise((resolve) => {
-                    finished = true;
                     const done = () => {
                         clearTimeout(timer);
                         cancel();
-                        resolve(result || "silent");
+                        resolve(result || (sawBlock ? "kept" : "silent"));
                     };
                     const timer = setTimeout(done, ms);
                     wake = done;
@@ -432,6 +452,7 @@ function installActions(ctx) {
     }
 
     function isProtected(pos) {
+        if (spawnProtected && nearSpawn(pos)) return true;
         const r = config.protectRadius;
         if (!r) return false;
         const anchors = [ctx.home, config.chest && new Vec3(config.chest.x, config.chest.y, config.chest.z)];
