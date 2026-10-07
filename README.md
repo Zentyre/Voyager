@@ -54,6 +54,18 @@ npm install
 ```
 This also builds the bundled `mineflayer-collectblock` plugin. To check the install, run `npm test`, which starts the bot against a simulated Minecraft 26.1 server.
 
+### Optional: Minecraft 26.3 (unreleased)
+No mineflayer release supports 26.3 yet. To try it anyway, run this after `npm install`:
+```
+cd voyager/env/mineflayer
+npm run setup:26.3
+npm test -- 26.3
+```
+This patches the installed packages with the open, unmerged upstream PrismarineJS pull requests for 26.3, and downloads the 26.2/26.3 data from an open minecraft-data pull request, pinned to a fixed commit. The upstream work isn't reviewed yet and has known gaps: a few item components can't be decoded and some recipes are incomplete. Expect bugs. Then use `"version": "26.3"`. Note:
+- `npm install` undoes the patches, so run `npm run setup:26.3` again after it.
+- To go back to plain 26.1, run `rm -rf node_modules && npm install`.
+- See [`mc-26.3/setup.js`](voyager/env/mineflayer/mc-26.3/setup.js) for the exact list of pull requests.
+
 ## Minecraft Setup
 The simplest setup lets Voyager download and run a vanilla Minecraft server for you; it needs Java 25 for Minecraft 26.1. No mods are needed. You can also connect to a world you opened to LAN or to your own server. See [Minecraft Setup](installation/minecraft_instance_install.md) for all options.
 
@@ -98,7 +110,7 @@ Claude requests opt into Anthropic's server-side fallback: if a safety classifie
 Skills and cached questions are retrieved by embedding similarity. With an OpenAI key, Voyager uses OpenAI's `text-embedding-3-small`; without one it falls back to a local keyword-based index, so Voyager runs with only an Anthropic key. Choose explicitly with `embedding_provider="openai"` or `"local"`. The index is rebuilt automatically from `skills.json` when the embedding model changes, so the bundled skill libraries load either way.
 
 ## What's new in this version
-- **Modern Minecraft:** mineflayer 4.39 with Minecraft 26.1 support. Game-rule names follow 1.21.11's snake_case renames, and old versions still get the old names.
+- **Modern Minecraft:** mineflayer 4.39 with Minecraft 26.1 support, plus opt-in [unreleased 26.3 support](#optional-minecraft-263-unreleased). Game-rule names follow 1.21.11's snake_case renames, and old versions still get the old names.
 - **No mods or Microsoft login needed:** Voyager can run its own vanilla dedicated server. Pausing the world while the model thinks uses vanilla `/tick freeze` instead of the Multiplayer Server Pause mod, and the bot's respawn point follows it with `/spawnpoint` instead of the Better Respawn mod.
 - **Current models:** Anthropic and OpenAI through their official SDKs, replacing the old langchain/GPT-4 code. chromadb is replaced by a small built-in vector store.
 - **Better self-learning:**

@@ -21,7 +21,7 @@ Options you can add to `minecraft_server`:
 
 | Option | Default | Meaning |
 |---|---|---|
-| `version` | `"26.1"` | Minecraft version to download and run |
+| `version` | `"26.1"` | Minecraft version to download and run; `"26.3"` needs the [unreleased 26.3 setup](../README.md#optional-minecraft-263-unreleased) first |
 | `server_dir` | `"minecraft_server"` | where server files and worlds are kept (one subfolder per version) |
 | `port` | `25565` | server port |
 | `ops` | `()` | extra player names to make operators, e.g. your own |
