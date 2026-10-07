@@ -22,6 +22,7 @@ const EXTRA_BLOCK_DROPS = {
     short_grass: ["wheat_seeds"],
     tall_grass: ["wheat_seeds"],
     fern: ["wheat_seeds"],
+    gravel: ["flint"], // 10% chance per block
 };
 
 // Farmable crops: the crop block, what to plant, and what harvesting gives.

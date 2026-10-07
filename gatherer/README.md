@@ -2,7 +2,8 @@
 
 A small Minecraft bot that gets you the items you ask for. It mines, crafts,
 smelts, farms, breeds and hunts as needed, and can brew potions. It also wears
-armor, fights, eats, sleeps through the night and handles water. **It learns
+armor, fights with sword or bow, can act as a bodyguard, eats, sleeps through
+the night and handles water. **It learns
 from experience** and remembers what it learned between runs. It uses the same
 Mineflayer libraries as Voyager, but nothing else:
 
@@ -58,6 +59,8 @@ Use item names as they appear in `/give`: `raw_iron`, `iron_ingot`,
 | **Hunt**   | Items that come from mobs (leather, beef, wool, feathers, string, bones…). It always leaves `keepAnimals` adults of each farm animal alive. It skips babies (no drops) and anything with a name tag. It never hunts pets, horses, villagers, golems or creepers. |
 | **Armor**  | Wears the best armor it carries (leather → gold → chainmail → iron → diamond → netherite) and a shield in its off-hand. Upgrades as soon as it picks up something better. |
 | **Fight**  | Fights hostile mobs that come within `defendRadius`, dealing with creepers and archers first. It times swings to the weapon's cooldown and picks its weapon by damage per second. It can land critical hits (jump and strike while falling) and blocks arrows with a shield while closing in. It backs off to eat (golden apples first) when health drops to `fleeHealth`. It runs from creepers and wardens and leaves endermen and piglins alone. |
+| **Bow**    | Shoots with a bow when it has one and arrows: always for creepers (before they get close) and for anything more than 10 blocks away, otherwise when the learner rates it best. It works out the arc from arrow speed, drag and gravity, and leads moving targets. It keeps 7–24 blocks away and switches to its sword if something closes within 4. It walks closer when a wall blocks the shot, and picks its arrows back up afterwards. `!bow` makes a bow and arrows (string from spiders, arrows from skeletons or flint + feathers). |
+| **Bodyguard** | `!guard <player>` follows that player and fights anything that threatens them. It goes for whatever hurts them first (the server reports the attacker on 1.20+), then hostile mobs within `guardRadius` of them. It uses the bow for far threats, never strays more than `guardRadius + 8` blocks during a fight, and keeps eating and wearing armor. It won't sleep or wander off for food while on duty. |
 | **Eat**    | Eats the best food it carries when hunger drops to `eatBelow`. If it has none and gets hungry (`findFoodBelow`), it gets the easiest food: meat, bread or carrots. |
 
 Use `!plan <item>` to see what it would do without doing it:
@@ -86,7 +89,8 @@ It's plain statistics, saved to `memory.json` (one section per server):
 | **How long and how reliably each method works.** It times every mine, craft, smelt, farm, hunt, breed and brew, per item, and counts failures. | The planner swaps its built-in cost guesses for real ones. If mining iron keeps failing around here, it gets "expensive" and other options win. |
 | **Where things are.** Every ~45 s it notes ores, logs, sand, clay, water, beds, stations and animals nearby, and anything it mines or hunts. | When nothing is in sight, it heads back to the nearest remembered spot instead of wandering. If the spot is empty, it forgets it. The planner also treats remembered resources as cheaper. |
 | **Which way to explore.** When it has to wander, it picks one of 8 compass directions per item and area. | Directions that led to the resource score higher. It picks with UCB1: mostly the best so far, sometimes another to check. |
-| **How to fight each mob.** Styles are `crit` (jump attacks), `fast` (swing on cooldown) and `kite` (hit and step back). Each is scored per mob and per weapon type by whether it won and how much damage it took. | Each new fight against that mob uses the best style so far (UCB1 again), so it settles on what works for your setup. |
+| **How to fight each mob.** Styles are `crit` (jump attacks), `fast` (swing on cooldown), `kite` (hit and step back) and `bow` (when it has one). Each is scored per mob and per weapon (fist, sword, axe, with or without a bow) by whether it won and how much damage it took. | Each new fight against that mob uses the best style so far (UCB1 again), so it settles on what works for your setup. |
+| **Its own aim.** After each arrow it watches where the arrow actually flew, and how far above or below the target it passed. | It keeps a running correction for each distance (0–10, 10–20, 20–30, 30–40, 40+ blocks) and aims that much lower or higher next time. `!learned` shows the corrections and the hit rate. |
 | **Danger.** Where it died or took big damage (fades over a day). | It won't explore towards dangerous areas. |
 | **Unreachable blocks.** Spots the pathfinder couldn't get to. | Skips them for 6 hours instead of retrying every time. |
 
@@ -110,6 +114,8 @@ without the `!`.
 | `!sleep`                         | Sleep now (makes and places a bed if needed)  |
 | `!water`                         | Place a water source next to it               |
 | `!bucket`                        | Get a filled water bucket                     |
+| `!guard [player]`                | Bodyguard a player (you, if no name). `!stop` dismisses it. Also `!bodyguard`, `!protect` |
+| `!bow [arrows]`                  | Get a bow and arrows (16 by default) to use in fights |
 | `!armor`                         | Put on the best armor it has and say what it's wearing |
 | `!armor <material>`              | Get and wear a full set: `leather`, `golden`, `iron` or `diamond` |
 | `!learned`                       | What it has learned so far                    |
@@ -152,6 +158,11 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `defendRadius`       | `8`           | How close a hostile mob must be before it reacts                  |
 | `fleeHealth`         | `6`           | Back off and eat at or below this health (of 20)                  |
 | `useShield`          | `true`        | Block with a shield while closing in on archers                   |
+| `useBow`             | `true`        | Use a bow and arrows in fights when it has them                   |
+| `bowRange`           | `24`          | Furthest it likes to shoot from (it closes in beyond this)        |
+| `guardRadius`        | `12`          | Bodyguard: attack hostile mobs this close to the player           |
+| `followDistance`     | `3`           | Bodyguard: how close it stays to the player                       |
+| `guardAgainstPlayers`| `false`       | Bodyguard: also fight *players* who hurt the person it guards     |
 | `autoArmor`          | `true`        | Wear the best armor and shield it carries                         |
 | `eatBelow`           | `14`          | Eat when hunger is at or below this (of 20)                       |
 | `findFoodBelow`      | `8`           | Go get food when hungry with nothing to eat                       |
@@ -186,7 +197,11 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 - Carrots and potatoes can't be found in the wild, so it needs at least one
   to start a field. Crops take 5–30 minutes to grow and the bot stays nearby.
 - It can't get items that only come from trading or the Nether/End, and it
-  doesn't enchant, build, or use bows. `!plan` will say "no known way to get this".
+  doesn't enchant, build, or use crossbows or tridents. `!plan` will say "no
+  known way to get this".
+- The bodyguard can only follow someone it can see (within the server's view
+  distance) and can't teleport. If you run off, it waits and picks up again
+  when you come back.
 - Combat is better but not great, and it can still die. Use
   `/gamerule keepInventory true` if that matters.
 - Learning needs repetition: a few runs of a task before timings settle, a few
@@ -202,6 +217,8 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `lib/learning.js`   | Experience statistics, place memory, bandits, danger map, saving |
 | `lib/actions.js`    | Mining, crafting, smelting, hunting, exploring, chests    |
 | `lib/combat.js`     | Weapons, armor, melee styles, shield, fleeing, fire       |
+| `lib/archery.js`    | Bow aiming, shooting, learned aim correction, arrow pickup |
+| `lib/bodyguard.js`  | Following and protecting a player                         |
 | `lib/survival.js`   | When to fight, eat and sleep                              |
 | `lib/farming.js`    | Harvesting, replanting, planting new fields               |
 | `lib/animals.js`    | Breeding, babies, name tags, keeping herds alive          |

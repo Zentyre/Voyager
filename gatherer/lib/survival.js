@@ -60,7 +60,8 @@ function installSurvival(ctx) {
         const hungry = bot.food <= config.eatBelow || (bot.health < 12 && bot.food < 20);
         if (!hungry) return;
         let food = bestFood(bot.food <= 6);
-        if (!food && bot.food <= config.findFoodBelow) {
+        // While guarding someone, eat what we carry; don't wander off for food.
+        if (!food && bot.food <= config.findFoodBelow && !ctx.ward) {
             seekingFood = true;
             try {
                 const choice = planner.cheapestOf(kb.FOOD_SOURCES);
@@ -166,7 +167,7 @@ function installSurvival(ctx) {
     }
 
     async function maybeSleep() {
-        if (bedtime || config.autoSleep === false || !isNight() || !inOverworld()) return;
+        if (bedtime || ctx.ward || config.autoSleep === false || !isNight() || !inOverworld()) return;
         if (Date.now() < sleepRetryAt) return;
         if (!findBed(config.stationRadius * 4) && !config.bringBed) return;
         try {

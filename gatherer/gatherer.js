@@ -27,6 +27,8 @@ const { installAnimals } = require("./lib/animals");
 const { installWater } = require("./lib/water");
 const { installBrewing } = require("./lib/brewing");
 const { createLearning } = require("./lib/learning");
+const { installArchery } = require("./lib/archery");
+const { installBodyguard } = require("./lib/bodyguard");
 
 const DEFAULTS = {
     host: "localhost",
@@ -52,6 +54,11 @@ const DEFAULTS = {
     findFoodBelow: 8,
     autoArmor: true,
     useShield: true,
+    useBow: true,
+    bowRange: 24,
+    guardRadius: 12,
+    followDistance: 3,
+    guardAgainstPlayers: false,
     farm: true,
     farmSize: 9,
     farmWaitMinutes: 30,
@@ -130,6 +137,8 @@ bot.once("spawn", () => {
     installAnimals(ctx);
     installWater(ctx);
     installBrewing(ctx);
+    installArchery(ctx);
+    installBodyguard(ctx);
 
     // Keep path computation cheap: short per-tick budget and a hard timeout.
     const movements = new Movements(bot);
@@ -230,6 +239,7 @@ async function runTask(task) {
 
 function statusText() {
     const vitals = `Health ${Math.round(bot.health)}/20, food ${bot.food}/20.`;
+    if (ctx.ward) return `Guarding ${ctx.ward}. ${vitals} Arrows: ${ctx.arrowCount()}.`;
     if (!ctx.current) return `Idle. ${ctx.queue.length} task(s) queued. ${vitals}`;
     const t = ctx.current;
     return `Getting ${t.item}: ${Math.min(progress(t), t.count)}/${t.count}. ${ctx.queue.length} more queued. ${vitals}`;
@@ -256,6 +266,7 @@ const ARMOR_PIECES = ["helmet", "chestplate", "leggings", "boots"];
 const HELP = "Commands: " + [
     "get <item> [count]", "plan <item>", "farm", "plant <crop> [plots]", "breed <animal> [pairs]",
     "brew <potion> [count] [long|strong|splash]", "sleep", "water", "bucket", "armor [material]",
+    "guard [player]", "bow [arrows]",
     "learned", "forget", "stop", "status", "queue", "inv", "eat", "come", "deposit", "home", "quit",
 ]
     .map((c) => config.commandPrefix + c)
@@ -347,6 +358,27 @@ async function handleCommand(text, fromPlayer) {
             ctx.learn.reset();
             say("Forgot everything I learned on this server.");
             break;
+        case "guard":
+        case "bodyguard":
+        case "protect": {
+            const name = args[0] || fromPlayer;
+            if (!name) return say(`Usage: ${config.commandPrefix}guard <player>`);
+            if (name === bot.username) return say("I can't guard myself.");
+            await runExclusive("guard", () => ctx.bodyguard(name));
+            break;
+        }
+        case "bow": {
+            // Get a bow and some arrows, then it uses them in fights.
+            const arrows = parseInt(args[0] || "16", 10);
+            const needBow = ctx.countItem("bow") === 0;
+            const missing = arrows - ctx.arrowCount();
+            if (!needBow && missing <= 0) return say(`I already have a bow and ${ctx.arrowCount()} arrows.`);
+            if (needBow) ctx.queue.push({ item: "bow", count: 1 });
+            if (missing > 0) ctx.queue.push({ item: "arrow", count: missing });
+            say(`Getting ${ctx.countItem("bow") ? "" : "a bow and "}${Math.max(0, missing)} arrows.`);
+            runQueue();
+            break;
+        }
         case "armor": {
             const material = args[0];
             if (!material) {

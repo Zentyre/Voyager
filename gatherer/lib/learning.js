@@ -37,7 +37,7 @@ function createLearning(ctx) {
         all = {};
     }
     const mem = (all[worldKey] = all[worldKey] || {});
-    for (const key of ["methods", "places", "bandits", "unreachable", "stats"]) mem[key] = mem[key] || {};
+    for (const key of ["methods", "places", "bandits", "unreachable", "stats", "values"]) mem[key] = mem[key] || {};
     mem.danger = mem.danger || [];
     let dirty = false;
 
@@ -225,6 +225,20 @@ function createLearning(ctx) {
         return Boolean(t && Date.now() - t < UNREACHABLE_MS);
     }
 
+    // ---------- learned numbers (e.g. aim correction) ----------
+
+    function value(key, fallback) {
+        return config.learn === false ? fallback : mem.values[key] ?? fallback;
+    }
+
+    // Running average: move `key` a step of size `alpha` towards `sample`.
+    function ema(key, sample, alpha = 0.2) {
+        if (config.learn === false) return;
+        const old = mem.values[key];
+        mem.values[key] = old === undefined ? sample : old * (1 - alpha) + sample * alpha;
+        dirty = true;
+    }
+
     // ---------- counters, saving, summary ----------
 
     function count(name, by = 1) {
@@ -246,7 +260,7 @@ function createLearning(ctx) {
     }
 
     function reset() {
-        for (const key of ["methods", "places", "bandits", "unreachable", "stats"]) mem[key] = {};
+        for (const key of ["methods", "places", "bandits", "unreachable", "stats", "values"]) mem[key] = {};
         mem.danger = [];
         dirty = true;
         save();
@@ -279,6 +293,16 @@ function createLearning(ctx) {
             .slice(0, 6)
             .map(([mob, best]) => `${mob.replace(":", " with ")}: ${best.arm} (${Math.round(best.mean * 100)}%, ${best.n} fights)`);
         if (fights.length) lines.push(`Best fighting style: ${fights.join("; ")}`);
+        const shots = mem.stats.arrowsShot || 0;
+        if (shots) {
+            const bands = [0, 1, 2, 3, 4]
+                .filter((b) => mem.values[`aim:${b}`] !== undefined)
+                .map((b) => `${b * 10}-${b * 10 + 10}m ${mem.values[`aim:${b}`] > 0 ? "+" : ""}${mem.values[`aim:${b}`].toFixed(2)}`);
+            lines.push(
+                `Archery: ${shots} arrows, ${Math.round((100 * (mem.stats.arrowHits || 0)) / shots)}% hit` +
+                    (bands.length ? `; learned aim correction ${bands.join(", ")}` : "")
+            );
+        }
         lines.push(
             `Kills ${mem.stats.kills || 0}, deaths ${mem.stats.deaths || 0}, ` +
                 `danger spots ${mem.danger.length}, crops harvested ${mem.stats.harvested || 0}, ` +
@@ -316,6 +340,8 @@ function createLearning(ctx) {
         markUnreachable,
         isUnreachable,
         count,
+        value,
+        ema,
         save,
         reset,
         summary,

@@ -21,6 +21,7 @@ const ARMOR_RANK = ["leather", "golden", "chainmail", "turtle", "iron", "diamond
 //   crit - jump and hit while falling (+50% damage, slower)
 //   fast - hit as soon as the weapon is ready
 //   kite - hit, then step back out of reach
+//   bow  - shoot from a distance (only when carrying a bow and arrows)
 const STYLES = ["crit", "fast", "kite"];
 const RANGED = new Set(["skeleton", "stray", "bogged", "pillager", "witch", "blaze"]);
 const REACH = 3.0;
@@ -111,7 +112,14 @@ function installCombat(ctx) {
     // ---------- melee ----------
 
     // Attack `mob` until it dies (or it leaves `maxDistance`, or time runs out).
-    async function attack(mob, { timeoutMs = 30000, maxDistance = Infinity, style = "fast" } = {}) {
+    // `leash` ({ entity, radius }) stops the fight if we get dragged too far
+    // from someone (used by bodyguard mode).
+    function offLeash(leash) {
+        return Boolean(leash?.entity?.position && leash.entity.position.distanceTo(bot.entity.position) > leash.radius);
+    }
+
+    async function attack(mob, { timeoutMs = 30000, maxDistance = Infinity, style = "fast", leash = null } = {}) {
+        if (style === "bow") return ctx.shoot(mob, { timeoutMs, maxDistance, leash });
         const before = ctx.interrupts;
         ctx.target = mob;
         const weapon = await equipWeapon();
@@ -126,7 +134,7 @@ function installCombat(ctx) {
                 if (ctx.interrupts !== before) throw new Error("interrupted");
                 if (Date.now() - start > timeoutMs) throw new Error(`couldn't kill the ${mob.name} in time`);
                 const distance = mob.position.distanceTo(bot.entity.position);
-                if (distance > maxDistance) return; // it left
+                if (distance > maxDistance || offLeash(leash)) return; // it left, or we strayed
                 if (isHostile(mob) && bot.health <= config.fleeHealth) {
                     raiseShield(false);
                     await retreat(mob);
@@ -204,19 +212,32 @@ function installCombat(ctx) {
     }
 
     // Pick a fighting style for this mob type, fight, and score the result.
-    async function fight(mob) {
+    // Pick how to deal with `mob`: run, shoot, or the learned melee style.
+    function chooseStyle(mob) {
+        const distance = mob.position.distanceTo(bot.entity.position);
+        const bow = Boolean(ctx.hasBow?.());
+        const context = combatContext(mob) + (bow ? "+bow" : "");
+        if (mob.name === "warden") return { style: "flee", context };
+        if (kb.FLEE_FROM.has(mob.name)) {
+            // Creepers: shoot them before they get close, otherwise run.
+            return { style: bow && distance > 4 ? "bow" : "flee", context };
+        }
+        if (bot.health <= config.fleeHealth) return { style: "flee", context };
+        if (bow && distance > 10) return { style: "bow", context }; // not worth walking over
+        return { style: learn.choose(context, bow ? [...STYLES, "bow"] : STYLES), context };
+    }
+
+    async function fight(mob, { maxDistance = config.defendRadius * 2, leash = null } = {}) {
         const startHealth = bot.health;
         const deathsBefore = ctx.deaths;
-        const mustFlee = kb.FLEE_FROM.has(mob.name) || bot.health <= config.fleeHealth;
-        const context = combatContext(mob);
-        const style = mustFlee ? "flee" : learn.choose(context, STYLES);
+        const { style, context } = chooseStyle(mob);
         let won = false;
         try {
             if (style === "flee") {
                 await flee(mob);
             } else {
                 ctx.log(`Fighting ${mob.name} (${style}).`);
-                await attack(mob, { timeoutMs: 20000, maxDistance: config.defendRadius * 2, style });
+                await attack(mob, { timeoutMs: style === "bow" ? 40000 : 20000, maxDistance, style, leash });
                 won = !mob.isValid;
             }
         } catch (err) {
@@ -238,8 +259,8 @@ function installCombat(ctx) {
     // learned fighting style. Errors propagate so the hunt can move on.
     async function huntMob(mob) {
         if (!isHostile(mob)) return attack(mob, { style: "fast" });
-        const context = combatContext(mob);
-        const style = learn.choose(context, STYLES);
+        const { style, context } = chooseStyle(mob);
+        if (style === "flee") throw new Error(`not fighting a ${mob.name}`);
         const startHealth = bot.health;
         const deathsBefore = ctx.deaths;
         try {
@@ -289,6 +310,7 @@ function installCombat(ctx) {
 
     Object.assign(ctx, {
         isHostile,
+        offLeash,
         equipWeapon,
         equipArmor,
         attack,
