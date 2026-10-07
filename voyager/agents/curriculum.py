@@ -6,36 +6,54 @@ import re
 import voyager.utils as U
 from voyager.prompts import load_prompt
 from voyager.utils.json_utils import fix_and_parse_json
-from langchain.chat_models import ChatOpenAI
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.schema import HumanMessage, SystemMessage
-from langchain.vectorstores import Chroma
+from voyager.llm import ChatModel, Embeddings, HumanMessage, SystemMessage
+from voyager.vectorstore import VectorStore
+
+# A cached answer is reused when a new question's embedding is at least this
+# similar to a cached question's (cosine similarity).
+QA_CACHE_SIMILARITY = 0.975
 
 
 class CurriculumAgent:
     def __init__(
         self,
-        model_name="gpt-3.5-turbo",
-        temperature=0,
-        qa_model_name="gpt-3.5-turbo",
-        qa_temperature=0,
+        model_name="claude-opus-5-5",
+        temperature=None,
+        effort="medium",
+        qa_model_name="claude-opus-5-5",
+        qa_temperature=None,
+        qa_effort="low",
         request_timout=120,
         ckpt_dir="ckpt",
         resume=False,
         mode="auto",
         warm_up=None,
         core_inventory_items: str | None = None,
+        embeddings: Embeddings = None,
+        retry_failed_after: int = 10,
+        max_task_failures: int = 3,
     ):
-        self.llm = ChatOpenAI(
+        """
+        :param retry_failed_after: a failed task stops being listed as "too hard"
+        once this many more tasks have been completed, so the curriculum can
+        propose it again with the skills and items gained since
+        :param max_task_failures: after this many failures a task stays listed
+        as too hard for good
+        """
+        self.llm = ChatModel(
             model_name=model_name,
             temperature=temperature,
+            effort=effort,
             request_timeout=request_timout,
         )
-        self.qa_llm = ChatOpenAI(
+        self.qa_llm = ChatModel(
             model_name=qa_model_name,
             temperature=qa_temperature,
+            effort=qa_effort,
             request_timeout=request_timout,
         )
+        self.retry_failed_after = retry_failed_after
+        self.max_task_failures = max_task_failures
         assert mode in [
             "auto",
             "manual",
@@ -49,25 +67,23 @@ class CurriculumAgent:
                 f"{ckpt_dir}/curriculum/completed_tasks.json"
             )
             self.failed_tasks = U.load_json(f"{ckpt_dir}/curriculum/failed_tasks.json")
-            self.qa_cache = U.load_json(f"{ckpt_dir}/curriculum/qa_cache.json")
+            qa_path = f"{ckpt_dir}/curriculum/qa_cache.json"
+            self.qa_cache = U.load_json(qa_path) if U.f_exists(qa_path) else {}
+            info_path = f"{ckpt_dir}/curriculum/failed_task_info.json"
+            self.failed_task_info = (
+                U.load_json(info_path) if U.f_exists(info_path) else {}
+            )
         else:
             self.completed_tasks = []
             self.failed_tasks = []
             self.qa_cache = {}
-        # vectordb for qa cache
-        self.qa_cache_questions_vectordb = Chroma(
-            collection_name="qa_cache_questions_vectordb",
-            embedding_function=OpenAIEmbeddings(),
-            persist_directory=f"{ckpt_dir}/curriculum/vectordb",
+            self.failed_task_info = {}
+        # vectordb for qa cache; qa_cache.json is the source of truth
+        self.qa_cache_questions_vectordb = VectorStore(
+            f"{ckpt_dir}/curriculum/qa_index.json", embeddings or Embeddings()
         )
-        assert self.qa_cache_questions_vectordb._collection.count() == len(
-            self.qa_cache
-        ), (
-            f"Curriculum Agent's qa cache question vectordb is not synced with qa_cache.json.\n"
-            f"There are {self.qa_cache_questions_vectordb._collection.count()} questions in vectordb "
-            f"but {len(self.qa_cache)} questions in qa_cache.json.\n"
-            f"Did you set resume=False when initializing the agent?\n"
-            f"You may need to manually delete the qa cache question vectordb directory for running from scratch.\n"
+        self.qa_cache_questions_vectordb.sync(
+            {question: (question, {}) for question in self.qa_cache}
         )
         # if warm up not defined, initialize it as a dict, else, initialize all the missing value as a default value
         if not warm_up:
@@ -92,6 +108,7 @@ class CurriculumAgent:
     def default_warmup(self):
         return {
             "context": 15,
+            "version": 0,
             "biome": 10,
             "time": 15,
             "nearby_blocks": 0,
@@ -112,6 +129,7 @@ class CurriculumAgent:
     def curriculum_observations(self):
         return [
             "context",
+            "version",
             "biome",
             "time",
             "nearby_blocks",
@@ -132,9 +150,7 @@ class CurriculumAgent:
         return len(self.completed_tasks)
 
     def render_system_message(self):
-        system_message = SystemMessage(content=load_prompt("curriculum"))
-        assert isinstance(system_message, SystemMessage)
-        return system_message
+        return SystemMessage(content=load_prompt("curriculum"))
 
     def render_observation(self, *, events, chest_observation):
         assert events[-1][0] == "observe", "Last event must be observe"
@@ -178,7 +194,7 @@ class CurriculumAgent:
         completed_tasks = (
             ", ".join(self.completed_tasks) if self.completed_tasks else "None"
         )
-        failed_tasks = ", ".join(self.failed_tasks) if self.failed_tasks else "None"
+        failed_tasks = self.render_failed_tasks()
 
         # filter out optional inventory items if required
         if self.progress < self.warm_up["optional_inventory_items"]:
@@ -188,8 +204,10 @@ class CurriculumAgent:
                 if self._core_inv_items_regex.search(k) is not None
             }
 
+        version = event["status"].get("version")
         observation = {
             "context": "",
+            "version": f"Minecraft version: {version}\n\n" if version else "",
             "biome": f"Biome: {biome}\n\n",
             "time": f"Time: {time_of_day}\n\n",
             "nearby_blocks": f"Nearby blocks: {', '.join(voxels) if voxels else 'None'}\n\n",
@@ -240,7 +258,10 @@ class CurriculumAgent:
     def propose_next_task(self, *, events, chest_observation, max_retries=5):
         if self.progress == 0 and self.mode == "auto":
             task = "Mine 1 wood log"
-            context = "You can mine one of oak, birch, spruce, jungle, acacia, dark oak, or mangrove logs."
+            context = (
+                "You can mine one of oak, birch, spruce, jungle, acacia, dark oak, "
+                "mangrove, cherry, or pale oak logs."
+            )
             return task, context
 
         # hard code task when inventory is almost full
@@ -326,6 +347,23 @@ class CurriculumAgent:
             confirmed = input("Confirm? (y/n)").lower() in ["y", ""]
         return task, context
 
+    def render_failed_tasks(self):
+        """Failed tasks the curriculum should avoid for now, with why they failed.
+
+        A task that failed fewer than max_task_failures times is dropped from
+        this list once retry_failed_after more tasks have been completed, so
+        it can be proposed again when the agent is better equipped.
+        """
+        shown = []
+        for task in dict.fromkeys(self.failed_tasks):
+            info = self.failed_task_info.get(task, {})
+            failures = info.get("failures", 1)
+            cooling = self.progress - info.get("progress", 0) < self.retry_failed_after
+            if failures >= self.max_task_failures or cooling:
+                reason = info.get("reason", "")
+                shown.append(f"{task} (reason: {reason})" if reason else task)
+        return ", ".join(shown) if shown else "None"
+
     def update_exploration_progress(self, info):
         task = info["task"]
         if task.startswith("Deposit useless items into the chest at"):
@@ -334,11 +372,17 @@ class CurriculumAgent:
         if info["success"]:
             print(f"\033[35mCompleted task {task}.\033[0m")
             self.completed_tasks.append(task)
+            self.failed_task_info.pop(task, None)
         else:
             print(
                 f"\033[35mFailed to complete task {task}. Skipping to next task.\033[0m"
             )
             self.failed_tasks.append(task)
+            entry = self.failed_task_info.setdefault(task, {"failures": 0})
+            entry["failures"] += 1
+            entry["progress"] = self.progress
+            if info.get("critique"):
+                entry["reason"] = info["critique"][:200]
 
         # clean up tasks and dump to disk
         self.clean_up_tasks()
@@ -365,6 +409,9 @@ class CurriculumAgent:
             self.completed_tasks, f"{self.ckpt_dir}/curriculum/completed_tasks.json"
         )
         U.dump_json(self.failed_tasks, f"{self.ckpt_dir}/curriculum/failed_tasks.json")
+        U.dump_json(
+            self.failed_task_info, f"{self.ckpt_dir}/curriculum/failed_task_info.json"
+        )
 
     def decompose_task(self, task, events):
         messages = [
@@ -388,27 +435,19 @@ class CurriculumAgent:
         questions = []
         answers = []
         for question in questions_new:
-            if self.qa_cache_questions_vectordb._collection.count() > 0:
-                docs_and_scores = (
-                    self.qa_cache_questions_vectordb.similarity_search_with_score(
-                        question, k=1
-                    )
-                )
-                if docs_and_scores and docs_and_scores[0][1] < 0.05:
-                    question_cached = docs_and_scores[0][0].page_content
+            if len(self.qa_cache_questions_vectordb) > 0:
+                hits = self.qa_cache_questions_vectordb.search(question, k=1)
+                if hits and hits[0][3] >= QA_CACHE_SIMILARITY:
+                    question_cached = hits[0][1]
                     assert question_cached in self.qa_cache
                     answer_cached = self.qa_cache[question_cached]
                     questions.append(question_cached)
                     answers.append(answer_cached)
                     continue
             answer = self.run_qa_step2_answer_questions(question=question)
-            assert question not in self.qa_cache
             self.qa_cache[question] = answer
-            self.qa_cache_questions_vectordb.add_texts(
-                texts=[question],
-            )
+            self.qa_cache_questions_vectordb.add(texts=[question])
             U.dump_json(self.qa_cache, f"{self.ckpt_dir}/curriculum/qa_cache.json")
-            self.qa_cache_questions_vectordb.persist()
             questions.append(question)
             answers.append(answer)
         assert len(questions_new) == len(questions) == len(answers)
@@ -425,11 +464,8 @@ class CurriculumAgent:
         else:
             answer = self.run_qa_step2_answer_questions(question=question)
             self.qa_cache[question] = answer
-            self.qa_cache_questions_vectordb.add_texts(
-                texts=[question],
-            )
+            self.qa_cache_questions_vectordb.add(texts=[question])
             U.dump_json(self.qa_cache, f"{self.ckpt_dir}/curriculum/qa_cache.json")
-            self.qa_cache_questions_vectordb.persist()
         context = f"Question: {question}\n{answer}"
         return context
 

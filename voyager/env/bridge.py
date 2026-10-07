@@ -12,6 +12,7 @@ from gymnasium.core import ObsType
 import voyager.utils as U
 
 from .minecraft_launcher import MinecraftInstance
+from .minecraft_server import MinecraftServer
 from .process_monitor import SubprocessMonitor
 
 
@@ -20,28 +21,60 @@ class VoyagerEnv(gym.Env):
         self,
         mc_port=None,
         azure_login=None,
+        minecraft_server=None,
+        mc_host="localhost",
+        mc_version=None,
+        bot_username="bot",
         server_host="http://127.0.0.1",
         server_port=3000,
         request_timeout=600,
         log_path="./logs",
     ):
-        if not mc_port and not azure_login:
-            raise ValueError("Either mc_port or azure_login must be specified")
-        if mc_port and azure_login:
+        """
+        Connect to Minecraft in one of three ways:
+        - minecraft_server: dict of MinecraftServer options; Voyager downloads and
+          runs a vanilla dedicated server (recommended)
+        - mc_port (+ mc_host): join a world or server that is already running,
+          e.g. a singleplayer world opened to LAN with cheats on
+        - azure_login: launch the Minecraft client with a Microsoft login and
+          join the LAN world you open in it
+        :param mc_version: Minecraft version to connect with; None detects it
+        from the server
+        """
+        modes = [m for m in (mc_port, azure_login, minecraft_server) if m]
+        if not modes:
+            raise ValueError(
+                "One of minecraft_server, mc_port or azure_login must be specified"
+            )
+        if len(modes) > 1:
             warnings.warn(
-                "Both mc_port and mc_login are specified, mc_port will be ignored"
+                "More than one of minecraft_server, mc_port and azure_login is "
+                "specified; using minecraft_server, then azure_login, then mc_port"
             )
         self.mc_port = mc_port
-        self.azure_login = azure_login
+        self.mc_host = mc_host
+        self.mc_version = mc_version
+        self.bot_username = bot_username
+        self.azure_login = None if minecraft_server else azure_login
         self.server = f"{server_host}:{server_port}"
         self.server_port = server_port
         self.request_timeout = request_timeout
         self.log_path = log_path
         self.mineflayer = self.get_mineflayer_process(server_port)
-        if azure_login:
+        self.mc_server = None
+        self.mc_instance = None
+        if minecraft_server:
+            U.f_mkdir(self.log_path, "minecraft")
+            self.mc_server = MinecraftServer(
+                bot_username=bot_username,
+                log_path=U.f_join(self.log_path, "minecraft"),
+                **minecraft_server,
+            )
+            self.mc_host = "localhost"
+            self.mc_port = self.mc_server.port
+            self.mc_version = self.mc_version or self.mc_server.version
+        elif self.azure_login:
             self.mc_instance = self.get_mc_instance()
-        else:
-            self.mc_instance = None
         self.has_reset = False
         self.reset_options = None
         self.connected = False
@@ -71,6 +104,8 @@ class VoyagerEnv(gym.Env):
         )
 
     def check_process(self):
+        if self.mc_server and not self.mc_server.is_running:
+            self.mc_server.run()
         if self.mc_instance and not self.mc_instance.is_running:
             # if self.mc_instance:
             #     self.mc_instance.check_process()
@@ -85,6 +120,7 @@ class VoyagerEnv(gym.Env):
             print("Mineflayer process has exited, restarting")
             self.mineflayer.run()
             if not self.mineflayer.is_running:
+                retry += 1
                 if retry > 3:
                     raise RuntimeError("Mineflayer process failed to start")
                 else:
@@ -100,6 +136,8 @@ class VoyagerEnv(gym.Env):
                 raise RuntimeError(
                     f"Minecraft server reply with code {res.status_code}"
                 )
+            # the new bot unfreezes the world when it spawns
+            self.server_paused = False
             return res.json()
 
     def step(
@@ -140,7 +178,10 @@ class VoyagerEnv(gym.Env):
             raise RuntimeError("inventory can only be set when options is hard")
 
         self.reset_options = {
+            "host": self.mc_host,
             "port": self.mc_port,
+            "version": self.mc_version,
+            "username": self.bot_username,
             "reset": options.get("mode", "hard"),
             "inventory": options.get("inventory", {}),
             "equipment": options.get("equipment", []),
@@ -170,6 +211,8 @@ class VoyagerEnv(gym.Env):
         if self.mc_instance:
             self.mc_instance.stop()
         self.mineflayer.stop()
+        if self.mc_server:
+            self.mc_server.stop()
         return not self.connected
 
     def pause(self):
@@ -181,7 +224,7 @@ class VoyagerEnv(gym.Env):
 
     def unpause(self):
         if self.mineflayer.is_running and self.server_paused:
-            res = requests.post(f"{self.server}/pause")
+            res = requests.post(f"{self.server}/unpause")
             if res.status_code == 200:
                 self.server_paused = False
             else:

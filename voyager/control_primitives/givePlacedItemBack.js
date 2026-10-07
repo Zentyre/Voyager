@@ -1,14 +1,14 @@
 async function givePlacedItemBack(bot, name, position) {
-    await bot.chat("/gamerule doTileDrops false");
+    setGameRule(bot, "doTileDrops", false);
     // iterate name and position
     const history = [];
     for (let i = 0; i < name.length; i++) {
         await givePlacedItemBackSingle(bot, name[i], position[i]);
     }
-    await bot.chat("/gamerule doTileDrops true");
+    setGameRule(bot, "doTileDrops", true);
 
     async function givePlacedItemBackSingle(bot, name, position) {
-        bot.chat(`/give bot ${name} 1`);
+        bot.chat(`/give @s ${name} 1`);
         const x = Math.floor(position.x);
         const y = Math.floor(position.y);
         const z = Math.floor(position.z);

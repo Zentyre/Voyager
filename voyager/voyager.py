@@ -10,7 +10,9 @@ from .env import VoyagerEnv
 from .agents import ActionAgent
 from .agents import CriticAgent
 from .agents import CurriculumAgent
+from .agents import LessonMemory
 from .agents import SkillManager
+from .llm import DEFAULT_MODEL, Embeddings
 
 
 # TODO: remove event memory
@@ -19,32 +21,44 @@ class Voyager:
         self,
         mc_port: int = None,
         azure_login: Dict[str, str] = None,
+        minecraft_server: Dict = None,
+        mc_host: str = "localhost",
+        mc_version: str = None,
         server_port: int = 3000,
+        anthropic_api_key: str = None,
         openai_api_key: str = None,
+        embedding_provider: str = "auto",
         env_wait_ticks: int = 20,
         env_request_timeout: int = 600,
         max_iterations: int = 160,
         reset_placed_if_failed: bool = False,
-        action_agent_model_name: str = "gpt-4",
-        action_agent_temperature: float = 0,
+        action_agent_model_name: str = DEFAULT_MODEL,
+        action_agent_temperature: float = None,
+        action_agent_effort: str = "high",
         action_agent_task_max_retries: int = 4,
         action_agent_show_chat_log: bool = True,
         action_agent_show_execution_error: bool = True,
-        curriculum_agent_model_name: str = "gpt-4",
-        curriculum_agent_temperature: float = 0,
-        curriculum_agent_qa_model_name: str = "gpt-3.5-turbo",
-        curriculum_agent_qa_temperature: float = 0,
+        curriculum_agent_model_name: str = DEFAULT_MODEL,
+        curriculum_agent_temperature: float = None,
+        curriculum_agent_effort: str = "medium",
+        curriculum_agent_qa_model_name: str = DEFAULT_MODEL,
+        curriculum_agent_qa_temperature: float = None,
+        curriculum_agent_qa_effort: str = "low",
         curriculum_agent_warm_up: Dict[str, int] = None,
         curriculum_agent_core_inventory_items: str = r".*_log|.*_planks|stick|crafting_table|furnace"
         r"|cobblestone|dirt|coal|.*_pickaxe|.*_sword|.*_axe",
         curriculum_agent_mode: str = "auto",
-        critic_agent_model_name: str = "gpt-4",
-        critic_agent_temperature: float = 0,
+        curriculum_agent_retry_failed_after: int = 10,
+        critic_agent_model_name: str = DEFAULT_MODEL,
+        critic_agent_temperature: float = None,
+        critic_agent_effort: str = "medium",
         critic_agent_mode: str = "auto",
-        skill_manager_model_name: str = "gpt-3.5-turbo",
-        skill_manager_temperature: float = 0,
+        skill_manager_model_name: str = DEFAULT_MODEL,
+        skill_manager_temperature: float = None,
         skill_manager_retrieval_top_k: int = 5,
-        openai_api_request_timeout: int = 240,
+        lesson_memory: bool = True,
+        llm_request_timeout: int = 240,
+        openai_api_request_timeout: int = None,
         ckpt_dir: str = "ckpt",
         skill_library_dir: str = None,
         resume: bool = False,
@@ -55,10 +69,19 @@ class Voyager:
         Curriculum agent is the automatic curriculum in paper.
         Critic agent is the self-verification in paper.
         Skill manager is the skill library in paper.
-        :param mc_port: minecraft in-game port
-        :param azure_login: minecraft login config
+        :param mc_port: port of an already running Minecraft world or server
+        :param azure_login: launch the Minecraft client with this Microsoft login config
+        :param minecraft_server: run a vanilla dedicated server; dict of
+        MinecraftServer options, e.g. {"version": "26.1", "accept_eula": True}
+        :param mc_host: host of the server when using mc_port
+        :param mc_version: Minecraft version to connect with; None detects it
         :param server_port: mineflayer port
-        :param openai_api_key: openai api key
+        :param anthropic_api_key: Anthropic API key; defaults to ANTHROPIC_API_KEY
+        :param openai_api_key: OpenAI API key; defaults to OPENAI_API_KEY
+        :param embedding_provider: "openai", "local" or "auto" (openai when an
+        OpenAI key is available) for skill and question retrieval
+        Model names starting with "claude" use Anthropic; others use OpenAI.
+        Effort ("low" to "max") sets how much each model thinks before answering.
         :param env_wait_ticks: how many ticks at the end each step will wait, if you found some chat log missing,
         you should increase this value
         :param env_request_timeout: how many seconds to wait for each step, if the code execution exceeds this time,
@@ -95,7 +118,12 @@ class Voyager:
         :param skill_manager_model_name: skill manager model name
         :param skill_manager_temperature: skill manager temperature
         :param skill_manager_retrieval_top_k: how many skills to retrieve for each task
-        :param openai_api_request_timeout: how many seconds to wait for openai api
+        :param lesson_memory: distill lessons from failed or retried tasks and
+        show them to the action agent on similar tasks
+        :param curriculum_agent_retry_failed_after: completed tasks after which a
+        failed task may be proposed again
+        :param llm_request_timeout: how many seconds to wait for each model request
+        :param openai_api_request_timeout: deprecated alias of llm_request_timeout
         :param ckpt_dir: checkpoint dir
         :param skill_library_dir: skill library dir
         :param resume: whether to resume from checkpoint
@@ -104,6 +132,9 @@ class Voyager:
         self.env = VoyagerEnv(
             mc_port=mc_port,
             azure_login=azure_login,
+            minecraft_server=minecraft_server,
+            mc_host=mc_host,
+            mc_version=mc_version,
             server_port=server_port,
             request_timeout=env_request_timeout,
         )
@@ -111,14 +142,20 @@ class Voyager:
         self.reset_placed_if_failed = reset_placed_if_failed
         self.max_iterations = max_iterations
 
-        # set openai api key
-        os.environ["OPENAI_API_KEY"] = openai_api_key
+        if anthropic_api_key:
+            os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
+        if openai_api_key:
+            os.environ["OPENAI_API_KEY"] = openai_api_key
+        request_timeout = openai_api_request_timeout or llm_request_timeout
+        embeddings = Embeddings(provider=embedding_provider)
+        print(f"\033[33mUsing {embeddings.model_name} embeddings for retrieval\033[0m")
 
         # init agents
         self.action_agent = ActionAgent(
             model_name=action_agent_model_name,
             temperature=action_agent_temperature,
-            request_timout=openai_api_request_timeout,
+            effort=action_agent_effort,
+            request_timout=request_timeout,
             ckpt_dir=ckpt_dir,
             resume=resume,
             chat_log=action_agent_show_chat_log,
@@ -128,28 +165,46 @@ class Voyager:
         self.curriculum_agent = CurriculumAgent(
             model_name=curriculum_agent_model_name,
             temperature=curriculum_agent_temperature,
+            effort=curriculum_agent_effort,
             qa_model_name=curriculum_agent_qa_model_name,
             qa_temperature=curriculum_agent_qa_temperature,
-            request_timout=openai_api_request_timeout,
+            qa_effort=curriculum_agent_qa_effort,
+            request_timout=request_timeout,
             ckpt_dir=ckpt_dir,
             resume=resume,
             mode=curriculum_agent_mode,
             warm_up=curriculum_agent_warm_up,
             core_inventory_items=curriculum_agent_core_inventory_items,
+            embeddings=embeddings,
+            retry_failed_after=curriculum_agent_retry_failed_after,
         )
         self.critic_agent = CriticAgent(
             model_name=critic_agent_model_name,
             temperature=critic_agent_temperature,
-            request_timout=openai_api_request_timeout,
+            effort=critic_agent_effort,
+            request_timout=request_timeout,
             mode=critic_agent_mode,
         )
         self.skill_manager = SkillManager(
             model_name=skill_manager_model_name,
             temperature=skill_manager_temperature,
             retrieval_top_k=skill_manager_retrieval_top_k,
-            request_timout=openai_api_request_timeout,
+            request_timout=request_timeout,
             ckpt_dir=skill_library_dir if skill_library_dir else ckpt_dir,
             resume=True if resume or skill_library_dir else False,
+            embeddings=embeddings,
+        )
+        self.lesson_memory = (
+            LessonMemory(
+                model_name=skill_manager_model_name,
+                temperature=skill_manager_temperature,
+                request_timout=request_timeout,
+                ckpt_dir=ckpt_dir,
+                resume=resume,
+                embeddings=embeddings,
+            )
+            if lesson_memory
+            else None
         )
         self.recorder = U.EventRecorder(ckpt_dir=ckpt_dir, resume=resume)
         self.resume = resume
@@ -160,9 +215,12 @@ class Voyager:
         self.context = ""
         self.messages = None
         self.conversations = []
+        self.attempts = []
+        self.lessons = ""
         self.last_events = None
 
     def reset(self, task, context="", reset_env=True):
+        self.attempts = []
         self.action_agent_rollout_num_iter = 0
         self.task = task
         self.context = context
@@ -185,9 +243,15 @@ class Voyager:
         print(
             f"\033[33mRender Action Agent system message with {len(skills)} skills\033[0m"
         )
+        self.lessons = self.lesson_memory.render(task) if self.lesson_memory else ""
         system_message = self.action_agent.render_system_message(skills=skills)
         human_message = self.action_agent.render_human_message(
-            events=events, code="", task=self.task, context=context, critique=""
+            events=events,
+            code="",
+            task=self.task,
+            context=context,
+            critique="",
+            lessons=self.lessons,
         )
         self.messages = [system_message, human_message]
         print(
@@ -210,6 +274,7 @@ class Voyager:
         )
         parsed_result = self.action_agent.process_ai_message(message=ai_message)
         success = False
+        critique = ""
         if isinstance(parsed_result, dict):
             code = parsed_result["program_code"] + "\n" + parsed_result["exec_code"]
             events = self.env.step(
@@ -254,12 +319,25 @@ class Voyager:
                 task=self.task,
                 context=self.context,
                 critique=critique,
+                lessons=self.lessons,
             )
             self.last_events = copy.deepcopy(events)
             self.messages = [system_message, human_message]
+            self.attempts.append(
+                {
+                    "code": parsed_result["program_code"],
+                    "errors": "\n".join(
+                        event["onError"]
+                        for event_type, event in events
+                        if event_type == "onError"
+                    ),
+                    "critique": critique,
+                }
+            )
         else:
             assert isinstance(parsed_result, str)
             self.recorder.record([], self.task)
+            self.attempts.append({"code": "", "errors": parsed_result, "critique": ""})
             print(f"\033[34m{parsed_result} Trying again!\033[0m")
         assert len(self.messages) == 2
         self.action_agent_rollout_num_iter += 1
@@ -270,6 +348,7 @@ class Voyager:
         info = {
             "task": self.task,
             "success": success,
+            "critique": critique,
             "conversations": self.conversations,
         }
         if success:
@@ -352,6 +431,10 @@ class Voyager:
 
             if info["success"]:
                 self.skill_manager.add_new_skill(info)
+            if self.lesson_memory:
+                self.lesson_memory.record(
+                    task=task, success=info["success"], attempts=self.attempts
+                )
 
             self.curriculum_agent.update_exploration_progress(info)
             print(

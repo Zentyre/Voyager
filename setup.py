@@ -4,7 +4,7 @@ from setuptools import setup, find_packages
 
 
 PKG_NAME = "voyager"
-VERSION = "0.1"
+VERSION = "0.2"
 EXTRAS = {}
 
 
@@ -50,11 +50,11 @@ setup(
     zip_safe=False,
     install_requires=_read_install_requires(),
     extras_require=_fill_extras(EXTRAS),
-    python_requires=">=3.9",
+    python_requires=">=3.10",
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
         "Environment :: Console",
-        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
     ],
 )

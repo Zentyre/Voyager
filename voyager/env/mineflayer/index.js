@@ -1,10 +1,9 @@
 const fs = require("fs");
 const express = require("express");
-const bodyParser = require("body-parser");
 const mineflayer = require("mineflayer");
 
 const skills = require("./lib/skillLoader");
-const { initCounter, getNextTime } = require("./lib/utils");
+const { initCounter, getNextTime, setGameRule } = require("./lib/utils");
 const obs = require("./lib/observation/base");
 const OnChat = require("./lib/observation/onChat");
 const OnError = require("./lib/observation/onError");
@@ -19,17 +18,25 @@ let bot = null;
 
 const app = express();
 
-app.use(bodyParser.json({ limit: "50mb" }));
-app.use(bodyParser.urlencoded({ limit: "50mb", extended: false }));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: false }));
+
+// Whether the server tick loop is frozen with /tick freeze (1.20.3+), which
+// stops the world while the agent waits for the language model.
+let tickFrozen = false;
 
 app.post("/start", (req, res) => {
     if (bot) onDisconnect("Restarting bot");
     bot = null;
     console.log(req.body);
+    tickFrozen = false;
     bot = mineflayer.createBot({
-        host: "localhost", // minecraft server ip
+        host: req.body.host || "localhost", // minecraft server ip
         port: req.body.port, // minecraft server port
-        username: "bot",
+        username: req.body.username || "bot",
+        auth: "offline",
+        // false lets mineflayer detect the server version from its ping
+        version: req.body.version || false,
         disableChatSigning: true,
         checkTimeoutInterval: 60 * 60 * 1000,
     });
@@ -51,6 +58,8 @@ app.post("/start", (req, res) => {
 
     bot.once("spawn", async () => {
         bot.removeListener("error", onConnectionFailed);
+        // in case a previous bot left the world frozen
+        bot.chat("/tick unfreeze");
         let itemTicks = 1;
         if (req.body.reset === "hard") {
             bot.chat("/clear @s");
@@ -99,7 +108,9 @@ app.post("/start", (req, res) => {
         const tool = require("mineflayer-tool").plugin;
         const collectBlock = require("mineflayer-collectblock").plugin;
         const pvp = require("mineflayer-pvp").plugin;
-        const minecraftHawkEye = require("minecrafthawkeye");
+        const hawkEyeModule = require("minecrafthawkeye");
+        // 1.3.7+ exports the plugin as `default`
+        const minecraftHawkEye = hawkEyeModule.default || hawkEyeModule;
         bot.loadPlugin(pathfinder);
         bot.loadPlugin(tool);
         bot.loadPlugin(collectBlock);
@@ -130,8 +141,8 @@ app.post("/start", (req, res) => {
         res.json(bot.observe());
 
         initCounter(bot);
-        bot.chat("/gamerule keepInventory true");
-        bot.chat("/gamerule doDaylightCycle false");
+        setGameRule(bot, "keepInventory", true);
+        setGameRule(bot, "doDaylightCycle", false);
     });
 
     function onConnectionFailed(e) {
@@ -222,7 +233,7 @@ app.post("/step", async (req, res) => {
         }
     }
 
-    bot.on("physicTick", onTick);
+    bot.on("physicsTick", onTick);
 
     // initialize fail count
     let _craftItemFailCount = 0;
@@ -242,13 +253,14 @@ app.post("/step", async (req, res) => {
         bot.emit("error", handleError(r));
     }
     await returnItems();
+    setRespawnPoint();
     // wait for last message
     await bot.waitForTicks(bot.waitTicks);
     if (!response_sent) {
         response_sent = true;
         res.json(bot.observe());
     }
-    bot.removeListener("physicTick", onTick);
+    bot.removeListener("physicsTick", onTick);
 
     async function evaluateCode(code, programs) {
         // Echo the code produced for players to see it. Don't echo when the bot code is already producing dialog or it will double echo
@@ -280,14 +292,12 @@ app.post("/step", async (req, res) => {
 
     function teleportBot() {
         const blocks = bot.findBlocks({
-            matching: (block) => {
-                return block.type === 0;
-            },
+            matching: (block) => block.name === "air",
             maxDistance: 1,
             count: 27,
         });
 
-        if (blocks) {
+        if (blocks.length > 0) {
             // console.log(blocks.length);
             const randomIndex = Math.floor(Math.random() * blocks.length);
             const block = blocks[randomIndex];
@@ -297,8 +307,18 @@ app.post("/step", async (req, res) => {
         }
     }
 
+    // Respawn near where the bot is working instead of at world spawn. This
+    // replaces the Better Respawn mod that older versions of Voyager needed.
+    function setRespawnPoint() {
+        const entity = bot.entity;
+        if (!entity || bot.health <= 0 || !entity.onGround) return;
+        if (entity.isInLava || entity.isInWater) return;
+        const p = entity.position.floored();
+        bot.chat(`/spawnpoint @s ${p.x} ${p.y} ${p.z}`);
+    }
+
     function returnItems() {
-        bot.chat("/gamerule doTileDrops false");
+        setGameRule(bot, "doTileDrops", false);
         const crafting_table = bot.findBlock({
             matching: mcData.blocksByName.crafting_table.id,
             maxDistance: 128,
@@ -332,7 +352,7 @@ app.post("/step", async (req, res) => {
         ) {
             bot.chat("/give @s iron_pickaxe");
         }
-        bot.chat("/gamerule doTileDrops true");
+        setGameRule(bot, "doTileDrops", true);
     }
 
     function handleError(err) {
@@ -399,22 +419,28 @@ app.post("/step", async (req, res) => {
 });
 
 app.post("/stop", (req, res) => {
-    bot.end();
+    if (bot) bot.end();
     res.json({
         message: "Bot stopped",
     });
 });
 
-app.post("/pause", (req, res) => {
+// Freeze or resume the server tick loop. Vanilla /tick (1.20.3+) replaces the
+// Multiplayer Server Pause mod that older versions of Voyager needed.
+function setTickFrozen(frozen, res) {
     if (!bot) {
         res.status(400).json({ error: "Bot not spawned" });
         return;
     }
-    bot.chat("/pause");
-    bot.waitForTicks(bot.waitTicks).then(() => {
-        res.json({ message: "Success" });
-    });
-});
+    if (tickFrozen !== frozen) {
+        bot.chat(frozen ? "/tick freeze" : "/tick unfreeze");
+        tickFrozen = frozen;
+    }
+    res.json({ message: "Success", paused: tickFrozen });
+}
+
+app.post("/pause", (req, res) => setTickFrozen(true, res));
+app.post("/unpause", (req, res) => setTickFrozen(false, res));
 
 // Server listening to PORT 3000
 
