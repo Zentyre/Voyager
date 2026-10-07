@@ -21,7 +21,7 @@ All from public sources, nothing hand-typed from memory:
 | Source | Used for |
 |--------|----------|
 | [minecraft-data](https://github.com/PrismarineJS/minecraft-data) branch `pc_26_2` | The hand-made 26.2 dataset and protocol (the starting point) |
-| [ViaVersion](https://github.com/ViaVersion/ViaVersion) `protocols/v26_2to26_3` | Every 26.2 → 26.3 protocol change: packet ids, entity movement, teleport confirmation, item components, particles, signs, advancements, game modes, command parsers, recipe displays |
+| [ViaVersion](https://github.com/ViaVersion/ViaVersion) `protocols/v26_2to26_3` | Every 26.2 → 26.3 protocol change: packet ids, entity movement, chunk light masks, teleport confirmation, item components, particles, signs, advancements, game modes, command parsers, recipe displays |
 | ViaVersion `identifiers-26.3.nbt` | Exact protocol order of blocks, items, entities, particles, sounds, item components and command parsers |
 | [misode/mcmeta](https://github.com/misode/mcmeta) tag `26.3-summary` | Mojang's block property lists (to number every block state) and default item components |
 

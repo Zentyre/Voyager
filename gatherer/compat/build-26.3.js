@@ -361,32 +361,38 @@ function buildProtocol(p, via262, via263) {
     setPacketOrder(p.configuration.toClient, cfgOrder);
     p.configuration.toClient.types.packet_post_effects = raw;
 
-    // -- entity movement: flags (bit 0 = on ground, bit 1 = single step) + interpolation steps
-    const flagFields = [
-        { name: "flags", type: "varint" },
-        { name: "interpolationSteps", type: "varint" },
-    ];
+    // -- entity movement: a flags varint (bit 0 = on ground, bit 1 = single step),
+    // then step/interpolation varints whose presence depends on the flags, then the
+    // usual deltas. The varying part is left as a buffer and decoded in lib/compat.js.
     cb.packet_rel_entity_move = ["container", [
-        { name: "entityId", type: "varint" }, ...flagFields,
-        { name: "dX", type: "i16" }, { name: "dY", type: "i16" }, { name: "dZ", type: "i16" },
+        { name: "entityId", type: "varint" },
+        { name: "flags", type: "varint" },
+        { name: "movement", type: "restBuffer" },
     ]];
     cb.packet_entity_move_look = ["container", [
-        { name: "entityId", type: "varint" }, ...flagFields,
-        { name: "dX", type: "i16" }, { name: "dY", type: "i16" }, { name: "dZ", type: "i16" },
-        { name: "yaw", type: "i8" }, { name: "pitch", type: "i8" },
+        { name: "entityId", type: "varint" },
+        { name: "flags", type: "varint" },
+        { name: "movement", type: "restBuffer" },
     ]];
     cb.packet_entity_look = ["container", [
         { name: "entityId", type: "varint" }, { name: "onGround", type: "bool" },
         { name: "yaw", type: "i8" }, { name: "pitch", type: "i8" },
     ]];
+    // step varints, x/y/z, interpolation varint, yaw, pitch, on ground
     cb.packet_sync_entity_position = ["container", [
         { name: "entityId", type: "varint" },
-        { name: "stepped", type: "varint" },
-        { name: "steps", type: "varint" },
-        { name: "x", type: "f64" }, { name: "y", type: "f64" }, { name: "z", type: "f64" },
-        { name: "interpolationSteps", type: "varint" },
-        { name: "yaw", type: "f32" }, { name: "pitch", type: "f32" },
+        { name: "movement", type: "restBuffer" },
     ]];
+
+    // -- light masks are now BitSets sent as a varint-length byte array
+    // (BitSet.toByteArray) instead of a varint-length array of longs.
+    for (const name of ["packet_map_chunk", "packet_update_light"]) {
+        for (const field of cb[name][1]) {
+            if (/LightMask$/.test(field.name)) field.type = "ByteArray";
+        }
+    }
+    // same for a partially filtered chat message's filter mask
+    cb.packet_player_chat[1].find((f) => f.name === "filterTypeMask").type[1].fields["2"] = "ByteArray";
 
     // -- teleport confirmation now carries the position the client ended up at
     sb.packet_teleport_confirm = ["container", [

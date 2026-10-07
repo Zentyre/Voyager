@@ -4,7 +4,7 @@
 // 26.3: the data in compat/26.3/ (built by compat/build-26.3.js from public
 // sources) is registered with minecraft-data, and patchBot() adapts the few
 // places where mineflayer itself sends or reads packets whose meaning changed
-// in 26.2/26.3 (teleport confirmation, digging action codes, arm swing,
+// in 26.2/26.3 (teleport confirmation, digging action codes, arm swing, light masks,
 // entity movement, signs, particles).
 
 const path = require("path");
@@ -134,13 +134,34 @@ function patchBot(bot) {
     client.emit = (event, packet, ...rest) => {
         if (!is26_3(bot) || !packet || typeof packet !== "object") return emit(event, packet, ...rest);
         switch (event) {
+            case "map_chunk":
+            case "update_light":
+                // Light masks are byte arrays now; mineflayer expects longs.
+                for (const key of ["skyLightMask", "blockLightMask", "emptySkyLightMask", "emptyBlockLightMask"]) {
+                    if (Buffer.isBuffer(packet[key])) packet[key] = bitSetToLongs(packet[key]);
+                }
+                break;
             case "rel_entity_move":
-            case "entity_move_look":
+            case "entity_move_look": {
+                const look = event === "entity_move_look";
+                const tail = readMovementTail(packet.movement, look ? 8 : 6);
+                if (!tail) return false; // malformed: skip rather than corrupt the entity
+                packet.dX = tail.readInt16BE(0);
+                packet.dY = tail.readInt16BE(2);
+                packet.dZ = tail.readInt16BE(4);
+                if (look) {
+                    packet.yaw = tail.readInt8(6);
+                    packet.pitch = tail.readInt8(7);
+                }
                 packet.onGround = (packet.flags & 1) === 1;
                 break;
-            case "sync_entity_position":
-                packet.dx = packet.dy = packet.dz = 0;
+            }
+            case "sync_entity_position": {
+                const sync = readSyncPosition(packet.movement);
+                if (!sync) return false;
+                Object.assign(packet, sync, { dx: 0, dy: 0, dz: 0 });
                 break;
+            }
             case "animation":
                 // 26.3: 0 wake up, 1 critical hit, 2 magic critical hit (swings moved out).
                 packet.animation = { 0: 2, 1: 4, 2: 5 }[packet.animation] ?? packet.animation;
@@ -157,6 +178,68 @@ function patchBot(bot) {
         }
         return emit(event, packet, ...rest);
     };
+}
+
+// BitSet.toByteArray() bytes -> the [high, low] int32 pairs minecraft-protocol
+// uses for an array of i64.
+function bitSetToLongs(bytes) {
+    const longs = [];
+    for (let i = 0; i < bytes.length; i += 8) {
+        const word = Buffer.alloc(8);
+        bytes.copy(word, 0, i, Math.min(i + 8, bytes.length));
+        longs.push([word.readInt32LE(4), word.readInt32LE(0)]);
+    }
+    return longs;
+}
+
+// Reads consecutive varints from buf starting at offset; returns the offset after
+// them if they end exactly at `end`, else -1.
+function skipVarints(buf, offset, end) {
+    while (offset < end) {
+        let n = 0;
+        while (offset < end && buf[offset] & 0x80 && n < 5) { offset++; n++; }
+        if (offset >= end) return -1;
+        offset++;
+    }
+    return offset === end ? offset : -1;
+}
+
+// Entity moves: optional step varints, then a fixed-size tail (deltas, angles).
+function readMovementTail(buf, tailSize) {
+    if (!Buffer.isBuffer(buf) || buf.length < tailSize) return null;
+    const end = buf.length - tailSize;
+    if (skipVarints(buf, 0, end) < 0) return null;
+    return buf.subarray(end);
+}
+
+// Position sync: step varints, x/y/z doubles, interpolation varint, yaw, pitch,
+// on ground. The number of leading varints isn't fixed, so try the layouts in
+// order of likelihood and keep the one whose varints line up exactly.
+function readSyncPosition(buf) {
+    if (!Buffer.isBuffer(buf)) return null;
+    const tail = buf.length - 9; // yaw f32, pitch f32, onGround bool
+    for (const heads of [2, 1, 0, 3]) {
+        let offset = 0;
+        let ok = true;
+        for (let i = 0; i < heads && ok; i++) {
+            let n = 0;
+            while (offset < buf.length && buf[offset] & 0x80 && n < 5) { offset++; n++; }
+            offset++;
+            if (offset > buf.length) ok = false;
+        }
+        const xyzEnd = offset + 24;
+        // at least the interpolation varint must sit between z and yaw
+        if (!ok || xyzEnd >= tail || skipVarints(buf, xyzEnd, tail) < 0) continue;
+        return {
+            x: buf.readDoubleBE(offset),
+            y: buf.readDoubleBE(offset + 8),
+            z: buf.readDoubleBE(offset + 16),
+            yaw: buf.readFloatBE(tail),
+            pitch: buf.readFloatBE(tail + 4),
+            onGround: buf[tail + 8] !== 0,
+        };
+    }
+    return null;
 }
 
 module.exports = { registerExtraVersions, patchBot, EXTRA_VERSIONS };
