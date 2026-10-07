@@ -8,16 +8,28 @@
 
     "viewDistance": "tiny",
     "searchRadius": 48,
+    "stationRadius": 24,
     "exploreDistance": 64,
     "maxExploreAttempts": 8,
 
     "chest": null,
+    "protectRadius": 0,
+    "extraMineable": [],
+
+    "hunt": true,
+    "defend": true,
+    "defendRadius": 8,
+    "fleeHealth": 6,
+    "eatBelow": 14,
+    "findFoodBelow": 8,
+
     "returnHome": true,
     "quitWhenDone": false,
+    "chatter": true,
 
     "tasks": [
-        { "item": "oak_log", "count": 32 },
-        { "item": "cobblestone", "count": 64 },
-        { "item": "coal", "count": 16 }
+        { "item": "oak_log", "count": 16 },
+        { "item": "stone_pickaxe", "count": 1 },
+        { "item": "torch", "count": 16 }
     ]
 }

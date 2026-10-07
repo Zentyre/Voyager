@@ -1,18 +1,25 @@
-// Lightweight, LLM-free resource gatherer built on the same Mineflayer stack
-// Voyager uses. Give it a list of items, and it finds, mines, and picks them up.
+// Lightweight, LLM-free Minecraft bot built on the same Mineflayer stack
+// Voyager uses. Ask for items and it mines, crafts, smelts, or hunts for them,
+// fighting off mobs and eating along the way.
 //
 //   node gatherer.js                          # uses config.json
-//   node gatherer.js oak_log:64 cobblestone:32
+//   node gatherer.js oak_log:64 iron_pickaxe:1
 //   node gatherer.js --config other.json coal:16
 
 const fs = require("fs");
 const path = require("path");
 const readline = require("readline");
 const mineflayer = require("mineflayer");
-const { pathfinder, Movements, goals } = require("mineflayer-pathfinder");
+const { pathfinder, Movements } = require("mineflayer-pathfinder");
 const { plugin: toolPlugin } = require("mineflayer-tool");
 const { plugin: collectBlockPlugin } = require("mineflayer-collectblock");
-const { Vec3 } = require("vec3");
+const { plugin: pvpPlugin } = require("mineflayer-pvp");
+
+const { createContext } = require("./lib/context");
+const { createKnowledge } = require("./lib/knowledge");
+const { createPlanner } = require("./lib/planner");
+const { installActions } = require("./lib/actions");
+const { installSurvival } = require("./lib/survival");
 
 const DEFAULTS = {
     host: "localhost",
@@ -23,11 +30,21 @@ const DEFAULTS = {
     owner: null,
     viewDistance: "tiny",
     searchRadius: 48,
+    stationRadius: 24,
     exploreDistance: 64,
     maxExploreAttempts: 8,
     chest: null,
+    protectRadius: 0,
+    extraMineable: [],
+    hunt: true,
+    defend: true,
+    defendRadius: 8,
+    fleeHealth: 6,
+    eatBelow: 14,
+    findFoodBelow: 8,
     returnHome: true,
     quitWhenDone: false,
+    chatter: true,
     tasks: [],
 };
 
@@ -77,27 +94,21 @@ const bot = mineflayer.createBot({
 bot.loadPlugin(pathfinder);
 bot.loadPlugin(toolPlugin);
 bot.loadPlugin(collectBlockPlugin);
+bot.loadPlugin(pvpPlugin);
 
-const queue = [...config.tasks];
-let current = null; // { item, count, startCount, deposited }
-let running = false;
-let stopRequested = false;
-let home = null;
-
-function log(message) {
-    console.log(`[gatherer] ${message}`);
-}
-
-function say(message) {
-    log(message);
-    if (bot.entity) bot.chat(message);
-}
+const ctx = createContext(bot, config);
+ctx.queue.push(...config.tasks);
+const { log, say } = ctx;
 
 bot.once("spawn", () => {
+    ctx.kb = createKnowledge(bot, config);
+    ctx.planner = createPlanner(ctx);
+    installActions(ctx);
+    installSurvival(ctx);
+
     // Keep path computation cheap: short per-tick budget and a hard timeout.
     const movements = new Movements(bot);
     movements.allowParkour = false;
-    movements.allowSprinting = true;
     bot.pathfinder.setMovements(movements);
     bot.pathfinder.thinkTimeout = 5000;
     bot.pathfinder.tickTimeout = 20;
@@ -105,287 +116,152 @@ bot.once("spawn", () => {
     // We handle chest deposits ourselves so progress stays accurate.
     bot.collectBlock.chestLocations = [];
 
-    home = bot.entity.position.clone();
-    log(`Spawned at ${fmt(home)} on ${bot.version}.`);
-    if (queue.length > 0) runQueue();
-    else log("Nothing queued. Say 'gather <item> [count]' in chat.");
+    ctx.home = bot.entity.position.clone();
+    log(`Spawned at ${ctx.fmt(ctx.home)} on ${bot.version}.`);
+    if (ctx.queue.length > 0) runQueue();
+    else log("Nothing queued. Say 'get <item> [count]' in chat.");
 });
 
 bot.on("death", () => {
-    log("Died. Pausing; current task will resume after respawn.");
-    stopCurrentAction();
+    log("Died. Will carry on after respawning.");
+    ctx.stopCurrentAction();
 });
 
-bot.on("kicked", (reason) => log(`Kicked: ${reason}`));
+bot.on("kicked", (reason) => log(`Kicked: ${typeof reason === "string" ? reason : JSON.stringify(reason)}`));
 bot.on("error", (err) => log(`Error: ${err.message}`));
 bot.on("end", (reason) => {
     log(`Disconnected (${reason}).`);
     process.exit(0);
 });
 
-// ---------- item -> block lookup ----------
-
-// Every block that drops `itemName` when mined (e.g. coal -> coal_ore,
-// deepslate_coal_ore; cobblestone -> stone, cobblestone).
-function blocksThatDrop(itemName) {
-    const item = bot.registry.itemsByName[itemName];
-    const blocks = [];
-    for (const block of bot.registry.blocksArray) {
-        const drops = block.drops || [];
-        const dropsItem =
-            item &&
-            drops.some((d) => (typeof d === "number" ? d : d.drop?.id ?? d.drop) === item.id);
-        if (dropsItem || block.name === itemName) blocks.push(block);
-    }
-    return blocks;
-}
-
-function canHarvest(block) {
-    if (!block.harvestTools) return true;
-    return bot.inventory
-        .items()
-        .some((i) => block.harvestTools[i.type]);
-}
-
-function weakestToolFor(block) {
-    const id = Object.keys(block.harvestTools || {})[0];
-    return id ? bot.registry.items[id].name : "a tool";
-}
-
-function countItem(name) {
-    return bot.inventory
-        .items()
-        .filter((i) => i.name === name)
-        .reduce((sum, i) => sum + i.count, 0);
-}
+// ---------- task queue ----------
 
 function progress(task) {
-    return countItem(task.item) - task.startCount + task.deposited;
+    return ctx.countItem(task.item) - task.startCount + task.deposited;
 }
-
-// ---------- main loop ----------
 
 async function runQueue() {
-    if (running) return;
-    running = true;
-    while (queue.length > 0) {
-        stopRequested = false;
-        const task = queue.shift();
-        current = {
-            ...task,
-            startCount: countItem(task.item),
-            deposited: 0,
-        };
-        try {
-            await gather(current);
-        } catch (err) {
-            say(`Problem gathering ${task.item}: ${err.message}`);
-        }
-        current = null;
-        if (stopRequested) break;
-    }
-    running = false;
-
-    if (stopRequested) return;
-    if (config.chest) await safely(depositAll);
-    if (config.returnHome && home) await safely(() => goTo(home, 2));
-    say("All gathering tasks done.");
-    if (config.quitWhenDone) bot.quit();
-}
-
-async function gather(task) {
-    const sources = blocksThatDrop(task.item);
-    if (sources.length === 0) {
-        say(`I don't know any block that drops ${task.item}.`);
-        return;
-    }
-    const harvestable = sources.filter(canHarvest);
-    if (harvestable.length === 0) {
-        say(`I need a ${weakestToolFor(sources[0])} (or better) to get ${task.item}.`);
-        return;
-    }
-    const ids = harvestable.map((b) => b.id);
-    say(`Gathering ${task.count} ${task.item}.`);
-
-    let exploreAttempts = 0;
-    let failedDigs = 0;
-    const skipped = new Set(); // blocks we could not reach or break
-    while (!stopRequested && progress(task) < task.count) {
-        if (bot.inventory.emptySlotCount() < 2) {
-            if (!config.chest) {
-                say("Inventory is full and no chest is configured. Stopping.");
-                return;
-            }
-            await depositAll();
-            continue;
-        }
-
-        const positions = bot
-            .findBlocks({
-                matching: ids,
-                maxDistance: config.searchRadius,
-                count: 64,
-            })
-            .filter((p) => !skipped.has(p.toString()));
-        if (positions.length === 0) {
-            if (++exploreAttempts > config.maxExploreAttempts) {
-                say(`Couldn't find any more ${task.item} nearby. Moving on.`);
-                return;
-            }
-            log(`No ${task.item} source in range, exploring (${exploreAttempts}/${config.maxExploreAttempts}).`);
-            await explore();
-            continue;
-        }
-        exploreAttempts = 0;
-
-        const block = bot.blockAt(positions[0]);
-        let failure = null;
-        try {
-            await bot.collectBlock.collect(block, { ignoreNoPath: true });
-        } catch (err) {
-            failure = err.message;
-        }
-        if (stopRequested) return;
-        // collectBlock swallows path errors, so check whether the block is gone.
-        if (!failure && bot.blockAt(block.position)?.type === block.type) {
-            failure = "unreachable";
-        }
-        if (failure) {
-            skipped.add(block.position.toString());
-            log(`Skipping ${block.name} at ${fmt(block.position)}: ${failure}`);
-            if (++failedDigs > 10) {
-                say(`Too many failures getting ${task.item}. Moving on.`);
-                return;
-            }
-        } else {
-            failedDigs = 0;
-        }
-        log(`${task.item}: ${Math.min(progress(task), task.count)}/${task.count}`);
-    }
-    if (!stopRequested) say(`Finished gathering ${task.count} ${task.item}.`);
-}
-
-async function explore() {
-    const angle = Math.random() * Math.PI * 2;
-    const pos = bot.entity.position;
-    const x = Math.floor(pos.x + Math.cos(angle) * config.exploreDistance);
-    const z = Math.floor(pos.z + Math.sin(angle) * config.exploreDistance);
-    await safely(() =>
-        withTimeout(bot.pathfinder.goto(new goals.GoalXZ(x, z)), 60000)
-    );
-}
-
-async function depositAll() {
-    const chestPos = new Vec3(config.chest.x, config.chest.y, config.chest.z);
-    await goTo(chestPos, 2);
-    const chestBlock = bot.blockAt(chestPos);
-    if (!chestBlock || !chestBlock.name.includes("chest")) {
-        say(`No chest at ${fmt(chestPos)}.`);
-        return;
-    }
-    const chest = await bot.openContainer(chestBlock);
+    if (ctx.busy) return;
+    ctx.busy = true;
     try {
-        const wanted = new Set(
-            [current, ...queue, ...config.tasks].filter(Boolean).map((t) => t.item)
-        );
-        for (const item of bot.inventory.items()) {
-            if (!wanted.has(item.name)) continue;
+        if (ctx.idleWork) await ctx.idleWork; // e.g. finishing a meal
+        while (ctx.queue.length > 0) {
+            const task = ctx.queue.shift();
+            ctx.current = { ...task, startCount: ctx.countItem(task.item), deposited: 0 };
             try {
-                await chest.deposit(item.type, null, item.count);
-                if (current && item.name === current.item) {
-                    current.deposited += item.count;
-                }
+                await runTask(ctx.current);
             } catch (err) {
-                say(`Chest is full: ${err.message}`);
-                break;
+                if (err instanceof ctx.Stopped) return;
+                say(`Couldn't get ${task.item}: ${err.message}`);
+            } finally {
+                ctx.current = null;
             }
         }
-    } finally {
-        chest.close();
-    }
-    log("Deposited items in chest.");
-}
-
-// ---------- helpers ----------
-
-function goTo(pos, range = 1) {
-    return bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, range));
-}
-
-function withTimeout(promise, ms) {
-    let timer;
-    return Promise.race([
-        promise,
-        new Promise((_, reject) => {
-            timer = setTimeout(() => {
-                bot.pathfinder.setGoal(null);
-                reject(new Error("timed out"));
-            }, ms);
-        }),
-    ]).finally(() => clearTimeout(timer));
-}
-
-async function safely(fn) {
-    try {
-        await fn();
+        if (config.chest) await ctx.safely(ctx.depositAll);
+        if (config.returnHome && ctx.home) await ctx.safely(() => ctx.goTo(ctx.home, 2));
+        say("All tasks done.");
+        if (config.quitWhenDone) bot.quit();
     } catch (err) {
-        log(err.message);
+        if (!(err instanceof ctx.Stopped)) log(err.message);
+    } finally {
+        ctx.busy = false;
+        ctx.stopRequested = false;
     }
 }
 
-function stopCurrentAction() {
-    bot.pathfinder.setGoal(null);
-    bot.collectBlock.cancelTask().catch(() => {});
+// The pathfinder places dirt/cobblestone to climb and bridge. Don't let it
+// spend the items we were asked to collect.
+function updateScaffolding() {
+    const wanted = new Set([ctx.current, ...ctx.queue].filter(Boolean).map((t) => t.item));
+    bot.pathfinder.movements.scafoldingBlocks = ["dirt", "cobblestone", "netherrack", "cobbled_deepslate"]
+        .filter((name) => !wanted.has(name))
+        .map((name) => bot.registry.itemsByName[name].id);
 }
 
-function fmt(pos) {
-    return `${Math.floor(pos.x)} ${Math.floor(pos.y)} ${Math.floor(pos.z)}`;
+async function runTask(task) {
+    updateScaffolding();
+    say(`Getting ${task.count} ${task.item}.`);
+    while (progress(task) < task.count) {
+        ctx.checkStop();
+        const need = task.count - progress(task);
+        try {
+            await ctx.obtain(task.item, ctx.countItem(task.item) + need);
+        } catch (err) {
+            if (!(err instanceof ctx.Retry)) throw err;
+        }
+    }
+    say(`Got ${task.count} ${task.item}.`);
 }
 
 function statusText() {
-    if (!current) return `Idle. ${queue.length} task(s) queued.`;
-    return `Gathering ${current.item}: ${Math.min(progress(current), current.count)}/${current.count}. ${queue.length} more queued.`;
+    const vitals = `Health ${Math.round(bot.health)}/20, food ${bot.food}/20.`;
+    if (!ctx.current) return `Idle. ${ctx.queue.length} task(s) queued. ${vitals}`;
+    const t = ctx.current;
+    return `Getting ${t.item}: ${Math.min(progress(t), t.count)}/${t.count}. ${ctx.queue.length} more queued. ${vitals}`;
 }
 
 // ---------- commands (chat or terminal, plain text, no LLM) ----------
 
 const HELP =
-    "Commands: gather <item> [count] | stop | status | queue | come | deposit | home | quit";
+    "Commands: get <item> [count] | plan <item> | stop | status | queue | inv | eat | come | deposit | home | quit";
 
 async function handleCommand(text, fromPlayer) {
+    if (!ctx.planner) return; // not spawned yet
     const [cmd, ...args] = text.trim().split(/\s+/);
     switch ((cmd || "").toLowerCase()) {
-        case "gather": {
-            if (!args[0]) return say("Usage: gather <item> [count]");
-            queue.push({ item: args[0], count: parseInt(args[1] || "1", 10) });
-            say(`Queued ${args[1] || 1} ${args[0]}.`);
+        case "get":
+        case "gather":
+        case "craft":
+        case "smelt": {
+            const item = args[0];
+            if (!item) return say("Usage: get <item> [count]");
+            if (!bot.registry.itemsByName[item]) return say(`There's no item called ${item}.`);
+            const count = parseInt(args[1] || "1", 10);
+            ctx.queue.push({ item, count });
+            say(`Queued ${count} ${item}.`);
             runQueue();
             break;
         }
+        case "plan": {
+            const item = args[0];
+            if (!item || !bot.registry.itemsByName[item]) return say("Usage: plan <item>");
+            const lines = ctx.planner.explain(item);
+            lines.forEach((line) => log(line));
+            if (fromPlayer) lines.slice(0, 5).forEach((line) => bot.chat(line.trim()));
+            break;
+        }
         case "stop":
-            stopRequested = true;
-            queue.length = 0;
-            stopCurrentAction();
+            ctx.queue.length = 0;
+            if (ctx.busy) ctx.stopRequested = true;
+            ctx.stopCurrentAction();
             say("Stopped and cleared the queue.");
             break;
         case "status":
             say(statusText());
             break;
         case "queue":
-            say(queue.length ? queue.map((t) => `${t.item}x${t.count}`).join(", ") : "Queue is empty.");
+            say(ctx.queue.length ? ctx.queue.map((t) => `${t.item}x${t.count}`).join(", ") : "Queue is empty.");
+            break;
+        case "inv": {
+            const items = bot.inventory.items().map((i) => `${i.name}x${i.count}`);
+            say(items.length ? items.join(", ") : "Inventory is empty.");
+            break;
+        }
+        case "eat":
+            await ctx.safely(ctx.eat);
             break;
         case "come": {
             const player = fromPlayer && bot.players[fromPlayer]?.entity;
             if (!player) return say("I can't see you.");
-            await safely(() => goTo(player.position, 2));
+            await ctx.safely(() => ctx.goTo(player.position, 2));
             break;
         }
         case "deposit":
             if (!config.chest) return say("No chest configured.");
-            await safely(depositAll);
+            await ctx.safely(ctx.depositAll);
             break;
         case "home":
-            if (home) await safely(() => goTo(home, 2));
+            if (ctx.home) await ctx.safely(() => ctx.goTo(ctx.home, 2));
             break;
         case "quit":
             bot.quit();
@@ -401,9 +277,9 @@ async function handleCommand(text, fromPlayer) {
 bot.on("chat", (username, message) => {
     if (username === bot.username) return;
     if (config.owner && username !== config.owner) return;
-    handleCommand(message, username);
+    handleCommand(message, username).catch((err) => log(err.message));
 });
 
 readline
     .createInterface({ input: process.stdin })
-    .on("line", (line) => handleCommand(line, null));
+    .on("line", (line) => handleCommand(line, null).catch((err) => log(err.message)));
