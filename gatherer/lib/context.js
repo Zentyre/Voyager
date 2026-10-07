@@ -35,10 +35,14 @@ function createContext(bot, config) {
     // Prefix with the in-game name once logged in (Microsoft accounts have
     // their own names), the config label before that.
     ctx.log = (message) => console.log(`[${bot.username || config.username}] ${message}`);
-    ctx.say = (message) => {
+    // While a job someone asked for by /msg runs, ctx.replyTo is that player
+    // and everything the bot says goes to them privately.
+    ctx.replyTo = null;
+    ctx.sayPublic = (message) => {
         ctx.log(message);
         if (bot.entity && config.chatter !== false) bot.chat(message);
     };
+    ctx.say = (message) => (ctx.replyTo ? ctx.tell(ctx.replyTo, message) : ctx.sayPublic(message));
 
     // Reply to someone privately (/msg) when they asked privately.
     ctx.tell = (player, message) => {

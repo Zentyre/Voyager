@@ -13,6 +13,7 @@
 const path = require("path");
 const readline = require("readline");
 const { Worker } = require("worker_threads");
+const { addresses } = require("./commands");
 
 // How each unaddressed command is handed out.
 const SPLIT = new Set(["get", "gather", "craft", "smelt"]); // divide the count
@@ -329,7 +330,7 @@ function startCrew(configs, { manager = false } = {}) {
         if (!text) return;
         const [first, ...rest] = text.split(/\s+/);
         const target = byName(first);
-        if (target) return post(target, { type: "command", text: rest.join(" "), from: null });
+        if (target && addresses(first, rest)) return post(target, { type: "command", text: rest.join(" "), from: null });
         if (first.toLowerCase() === "all") {
             for (const m of online()) post(m, { type: "command", text: rest.join(" "), from: null, broadcast: true });
             return;

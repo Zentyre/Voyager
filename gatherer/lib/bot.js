@@ -24,6 +24,7 @@ const { installArchery } = require("./archery");
 const { installBodyguard } = require("./bodyguard");
 const { patchBot } = require("./compat");
 const { installModSupport } = require("./mods");
+const { addresses } = require("./commands");
 
 // bot.findBlocks skips chunk sections whose palette lacks the block, but a
 // section made of one block (all air, say) has no palette, so it checked all
@@ -240,6 +241,7 @@ function createBot(config, crew, reporter) {
             while (ctx.queue.length > 0) {
                 const task = ctx.queue.shift();
                 replyTo = task.replyTo || null;
+                ctx.replyTo = replyTo; // a task asked for by /msg reports by /msg
                 ctx.current = { ...task, startCount: ctx.countItem(task.item), deposited: 0 };
                 try {
                     await runTask(ctx.current);
@@ -257,6 +259,7 @@ function createBot(config, crew, reporter) {
         } catch (err) {
             if (!(err instanceof ctx.Stopped)) log(err.message);
         } finally {
+            ctx.replyTo = null;
             setBusy(false);
             ctx.stopRequested = false;
         }
@@ -333,14 +336,17 @@ function createBot(config, crew, reporter) {
     }
 
     // For one-off jobs outside the queue (farming, walking somewhere).
-    async function runExclusive(label, fn) {
-        if (ctx.busy) return say(`I'm busy. Say ${config.commandPrefix}stop first.`);
+    // `replyTo`: a player who asked by /msg; everything said meanwhile goes to them.
+    async function runActivity(label, fn, replyTo = null) {
+        if (ctx.busy) return ctx.tell(replyTo, `I'm busy. Say ${config.commandPrefix}stop first.`);
         setBusy(true);
+        ctx.replyTo = replyTo;
         try {
             await fn();
         } catch (err) {
             if (!(err instanceof ctx.Stopped)) say(`Couldn't ${label}: ${err.message}`);
         } finally {
+            ctx.replyTo = null;
             setBusy(false);
             ctx.stopRequested = false;
         }
@@ -382,7 +388,10 @@ function createBot(config, crew, reporter) {
         if (!ctx.planner) return; // not spawned yet
         // Asked by /msg: answer by /msg.
         const privately = whisper && fromPlayer;
-        const say = privately ? (message) => ctx.tell(fromPlayer, message) : ctx.say;
+        // Asked in public chat: answer in public, even while a private job runs.
+        const say = privately ? (message) => ctx.tell(fromPlayer, message) : fromPlayer ? ctx.sayPublic : ctx.say;
+        // Activities started by /msg report by /msg the whole time they run.
+        const runExclusive = (label, fn) => runActivity(label, fn, privately ? fromPlayer : null);
         const chatOut = (line) => (privately ? bot.whisper(fromPlayer, line) : bot.chat(line));
         const [cmd, ...args] = text.trim().split(/\s+/);
         switch ((cmd || "").toLowerCase()) {
@@ -578,11 +587,10 @@ function createBot(config, crew, reporter) {
     function route(text, fromPlayer) {
         const [first, ...rest] = text.trim().split(/\s+/);
         const word = (first || "").toLowerCase();
-        if (word === "all" || word === bot.username.toLowerCase() || word === config.username.toLowerCase()) {
-            return rest.join(" ");
-        }
+        const me = word === bot.username.toLowerCase() || word === config.username.toLowerCase();
+        if ((word === "all" || me) && addresses(word, rest)) return rest.join(" ");
         if (!crew) return text;
-        if (crew.members().has(word)) return null; // for another crew member
+        if (crew.members().has(word) && addresses(word, rest)) return null; // for another crew member
         // Unaddressed: the crew leader passes it to the coordinator, which
         // splits it up or picks who does it.
         if (crew.isLeader()) crew.send({ type: "crewCommand", text, from: fromPlayer });
@@ -618,7 +626,8 @@ function createBot(config, crew, reporter) {
         if (!fromOwner(username)) return;
         const text = stripPrefix(message.trim()) ?? message;
         const [first, ...rest] = text.trim().split(/\s+/);
-        run(first?.toLowerCase() === bot.username.toLowerCase() ? rest.join(" ") : text, username, { whisper: true });
+        const me = [bot.username, config.username].some((n) => n.toLowerCase() === first?.toLowerCase());
+        run(me && addresses(first, rest) ? rest.join(" ") : text, username, { whisper: true });
     });
 
     // Commands from the dashboard (single bot; in a crew they come through the coordinator).
