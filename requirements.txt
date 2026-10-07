@@ -1,8 +1,8 @@
 tqdm
-langchain
+langchain==0.0.235
 javascript
 setuptools
-openai
+openai==0.27.8
 chardet
 cchardet
 chromadb==0.3.29
@@ -12,3 +12,4 @@ setuptools
 gymnasium
 psutil
 minecraft_launcher_lib
+numpy<2
