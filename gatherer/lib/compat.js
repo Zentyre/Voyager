@@ -114,9 +114,35 @@ function patchBot(bot) {
     const finite = (...values) => values.every((v) => v === undefined || Number.isFinite(v));
     const inWorld = (p) => Math.abs(p.x ?? 0) < 3e7 && Math.abs(p.z ?? 0) < 3e7 && Math.abs(p.y ?? 0) < 2e7;
 
+    // A 26.3 client sends at most one movement per tick and ends every tick with
+    // tick_end; a teleport confirmation (which now carries the position) is that
+    // tick's movement. Mineflayer sends no tick_end and follows each confirmation
+    // with an extra position packet, so pace its packets the same way.
+    let movedThisTick = false;
+    let justConfirmed = false;
+    const endTick = () => {
+        if (client.state !== "play") return;
+        write("tick_end", {});
+        movedThisTick = false;
+    };
+    let ticker = null;
+    bot.once("login", () => {
+        if (is26_3(bot)) ticker = setInterval(endTick, 50);
+    });
+    client.once("end", () => clearInterval(ticker));
+    const isMove = (name) => /^(position|position_look|look|flying)$/.test(name);
+
     const write = client.write.bind(client);
     client.write = (name, params) => {
         if (!is26_3(bot)) return write(name, params);
+        if (isMove(name)) {
+            if (justConfirmed) {
+                note(`out ${name} DROPPED (the teleport confirmation already moved the player)`);
+                return undefined;
+            }
+            if (movedThisTick) endTick();
+            movedThisTick = true;
+        }
         switch (name) {
             case "teleport_confirm": {
                 // A second confirmation for the same teleport gets the player kicked.
@@ -141,6 +167,10 @@ function patchBot(bot) {
                     pitch: tp && !tp.flags?.pitch ? tp.pitch : bot.entity ? conv.toNotchianPitch(bot.entity.pitch) : 0,
                 };
                 note(`out teleport_confirm #${out.teleportId} ${fmt(out)}`);
+                if (movedThisTick) endTick();
+                movedThisTick = true;
+                justConfirmed = true;
+                setImmediate(() => (justConfirmed = false));
                 return write(name, out);
             }
             case "position":
