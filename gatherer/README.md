@@ -45,6 +45,48 @@ node gatherer.js --config other.json torch:32
 Use item names as they appear in `/give`: `raw_iron`, `iron_ingot`,
 `cobblestone`, `oak_log`, `torch`, `furnace`, `leather`, `cooked_beef`, …
 
+## Accounts (online-mode servers)
+
+On a server with `online-mode=true` every bot needs **its own Minecraft Java
+Edition account** (a Microsoft account that owns the game). One account can't
+be online twice, so a bot can't share your account while you're playing.
+
+1. **Get one account per bot.** For four bots, that's four Microsoft accounts,
+   each with Java Edition.
+2. **Make your config:** `cp config.online.example.json config.json`, then set
+   `host` and `port`. The `username` values (`Miner`, `Farmer`, `Hunter`,
+   `Guard`) are just labels for each saved login. In game, each bot uses its
+   account's name. You can address it by either: `!Miner status`, or its in-game name.
+3. **Sign each bot in once:** run `npm start`. The bots start one at a time, and
+   each new one prints:
+
+   ```
+   ===== Sign in the Minecraft account for bot "Miner": open https://www.microsoft.com/link and enter code ABCD1234 (expires in 15 min). =====
+   ```
+
+   Open the link on any device, enter the code, and sign in with **that bot's**
+   Microsoft account. Use a private/incognito window so you don't sign in as
+   yourself by accident. The next bot's code appears once the first has joined.
+4. **That's it.** Logins are saved in `gatherer/accounts/` and renew
+   themselves, so later starts need no codes. To switch a bot to another
+   account, delete its files in `accounts/` and sign in again.
+
+Keep `accounts/` private: it holds login tokens. It's in `.gitignore`, so it
+never gets committed. Never put passwords in the config. Sign-in always goes
+through Microsoft's page.
+
+**Server side:**
+- If you use a whitelist, add each bot by its in-game name (`/whitelist add <name>`).
+- Don't op the bots; they don't need it.
+- Set `view-distance` in `server.properties` to 10 or more so they can see
+  as far as `"normal"` asks for.
+- With `online-mode=true`, names are verified, so only the real Zentyre can
+  command the bots.
+
+On a LAN world or an `online-mode=false` server, leave `"auth": "offline"` and
+any names work with no accounts. Anyone can then join as any name, including
+yours, though.
+
 ## Crews: several bots at once
 
 List bots under `"bots"` in `config.json`. Everything else in the file is shared,
