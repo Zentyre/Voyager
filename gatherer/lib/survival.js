@@ -3,6 +3,15 @@
 
 const { goals } = require("mineflayer-pathfinder");
 
+const ARMOR_SLOTS = { helmet: "head", chestplate: "torso", leggings: "legs", boots: "feet" };
+const ARMOR_RANK = ["leather", "golden", "chainmail", "turtle", "iron", "diamond", "netherite"];
+
+function armorInfo(name) {
+    const match = /^([a-z]+)_(helmet|chestplate|leggings|boots)$/.exec(name || "");
+    if (!match) return null;
+    return { slot: ARMOR_SLOTS[match[2]], rank: ARMOR_RANK.indexOf(match[1]) };
+}
+
 const WEAPONS = [
     "netherite_sword", "diamond_sword", "iron_sword", "stone_sword", "golden_sword", "wooden_sword",
     "netherite_axe", "diamond_axe", "iron_axe", "stone_axe", "golden_axe", "wooden_axe",
@@ -42,6 +51,28 @@ function installSurvival(ctx) {
 
     ctx.threatNearby = () =>
         config.defend !== false && Boolean(bot.entity) && inDanger() && Boolean(nearestThreat());
+
+    // Wear the best armor we carry, and a shield in the off-hand.
+    async function equipArmor() {
+        if (config.autoArmor === false) return;
+        for (const slot of Object.values(ARMOR_SLOTS)) {
+            const worn = armorInfo(bot.inventory.slots[bot.getEquipmentDestSlot(slot)]?.name);
+            const best = bot.inventory
+                .items()
+                .map((item) => ({ item, info: armorInfo(item.name) }))
+                .filter(({ info }) => info && info.slot === slot)
+                .sort((a, b) => b.info.rank - a.info.rank)[0];
+            if (best && (!worn || best.info.rank > worn.rank)) {
+                await bot
+                    .equip(best.item, slot)
+                    .then(() => ctx.log(`Put on ${best.item.name}.`))
+                    .catch((err) => ctx.log(`Couldn't wear ${best.item.name}: ${err.message}`));
+            }
+        }
+        const offHand = bot.inventory.slots[bot.getEquipmentDestSlot("off-hand")];
+        const shield = bot.inventory.items().find((i) => i.name === "shield");
+        if (!offHand && shield) await bot.equip(shield, "off-hand").catch(() => {});
+    }
 
     async function equipWeapon() {
         for (const name of WEAPONS) {
@@ -143,6 +174,7 @@ function installSurvival(ctx) {
     // Called between actions: deal with nearby mobs, then hunger.
     async function guard() {
         if (fighting || !bot.entity) return;
+        await equipArmor();
         for (let i = 0; i < 8 && ctx.threatNearby(); i++) {
             await fight(nearestThreat());
         }
@@ -165,7 +197,7 @@ function installSurvival(ctx) {
         }
     });
 
-    Object.assign(ctx, { guard, attack, eat: maybeEat });
+    Object.assign(ctx, { guard, attack, eat: maybeEat, equipArmor });
 }
 
 module.exports = { installSurvival };

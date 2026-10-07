@@ -37,11 +37,17 @@ function createContext(bot, config) {
 
     ctx.fmt = (pos) => `${Math.floor(pos.x)} ${Math.floor(pos.y)} ${Math.floor(pos.z)}`;
 
+    // Includes worn armor and the off-hand, so equipping something
+    // doesn't make it look like we lost it.
     ctx.countItem = (name) =>
-        bot.inventory
-            .items()
+        [...bot.inventory.items(), ...ctx.equipped()]
             .filter((i) => i.name === name)
             .reduce((sum, i) => sum + i.count, 0);
+
+    ctx.equipped = () =>
+        ["head", "torso", "legs", "feet", "off-hand"]
+            .map((slot) => bot.inventory.slots[bot.getEquipmentDestSlot(slot)])
+            .filter(Boolean);
 
     ctx.canHarvest = (block) =>
         !block.harvestTools ||

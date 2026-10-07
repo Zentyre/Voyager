@@ -9,6 +9,9 @@ const COST = {
     smelt: 2,
     huntVisible: 2,
     huntHidden: 7,
+    harvestRipe: 2,
+    waitForCrops: 10,
+    newFarm: 15, // till, plant, then wait for it to grow
 };
 const MAX_DEPTH = 8;
 
@@ -52,6 +55,35 @@ function createPlanner(ctx) {
             visibleCache.set(key, Boolean(found));
         }
         return visibleCache.get(key);
+    }
+
+    // "ripe", "growing", or null for crops of this kind nearby.
+    function cropState(crop) {
+        const key = "crop:" + crop.block;
+        if (!visibleCache.has(key)) {
+            const blocks = bot
+                .findBlocks({
+                    matching: bot.registry.blocksByName[crop.block].id,
+                    maxDistance: config.searchRadius,
+                    count: 64,
+                })
+                .map((pos) => bot.blockAt(pos))
+                .filter(Boolean);
+            const state = blocks.some(kb.isMatureCrop) ? "ripe" : blocks.length ? "growing" : null;
+            visibleCache.set(key, state);
+        }
+        return visibleCache.get(key);
+    }
+
+    function waterVisible() {
+        if (!visibleCache.has("water")) {
+            const found = bot.findBlock({
+                matching: bot.registry.blocksByName.water.id,
+                maxDistance: config.searchRadius,
+            });
+            visibleCache.set("water", Boolean(found));
+        }
+        return visibleCache.get("water");
     }
 
     function mobVisible(names) {
@@ -115,6 +147,25 @@ function createPlanner(ctx) {
             if (!ctx.stationNearby("furnace")) cost += estimate("furnace", depth + 1, path);
             if (ctx.fuelInInventory() === 0) cost += 1;
             options.push({ type: "smelt", cost, input });
+        }
+
+        // Farming
+        const crop = kb.cropFor(name);
+        if (crop) {
+            const state = cropState(crop);
+            let cost;
+            if (state === "ripe") cost = COST.harvestRipe;
+            else if (state === "growing") cost = COST.waitForCrops;
+            else {
+                // Potatoes and carrots are their own seed: need one to start.
+                const seedCost =
+                    crop.seed === name
+                        ? ctx.countItem(name) > 0 ? 0 : Infinity
+                        : estimate(crop.seed, depth + 1, path);
+                const hoeCost = Math.min(...kb.HOES.map((hoe) => estimate(hoe, depth + 1, path)));
+                cost = waterVisible() ? COST.newFarm + seedCost + hoeCost : Infinity;
+            }
+            options.push({ type: "farm", cost, crop, state });
         }
 
         // Hunting
@@ -192,6 +243,17 @@ function createPlanner(ctx) {
                 break;
             case "hunt":
                 lines.push(`${indent}${name}: hunt ${p.mobs.join("/")}`);
+                break;
+            case "farm":
+                if (p.state === "ripe") {
+                    lines.push(`${indent}${name}: harvest ripe ${p.crop.block} nearby`);
+                } else if (p.state === "growing") {
+                    lines.push(`${indent}${name}: wait for ${p.crop.block} nearby to grow`);
+                } else {
+                    lines.push(`${indent}${name}: plant a ${p.crop.block} field by water and wait`);
+                    if (!kb.HOES.some((h) => ctx.countItem(h) > 0)) explain("wooden_hoe", sub, next, lines, shown);
+                    if (p.crop.seed !== name) explain(p.crop.seed, sub, next, lines, shown);
+                }
                 break;
             default:
                 lines.push(`${indent}${name}: no known way to get this`);

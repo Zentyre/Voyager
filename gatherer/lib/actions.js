@@ -25,6 +25,8 @@ function installActions(ctx) {
                 return smelt(name, target, plan.input, next);
             case "hunt":
                 return hunt(name, target, plan.mobs, next);
+            case "farm":
+                return ctx.farmFor(name, target, plan.crop, next);
             default:
                 throw new Error(`I don't know how to get ${name}`);
         }

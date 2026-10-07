@@ -14,7 +14,33 @@ const NATURAL_BLOCKS = new Set([
     "dandelion", "poppy", "blue_orchid", "allium", "azure_bluet", "red_tulip",
     "orange_tulip", "white_tulip", "pink_tulip", "oxeye_daisy", "cornflower",
     "lily_of_the_valley", "brown_mushroom", "red_mushroom", "vine", "lily_pad",
+    "short_grass", "tall_grass", "fern",
 ]);
+
+// Block drops missing from minecraft-data (random drops it leaves out).
+const EXTRA_BLOCK_DROPS = {
+    short_grass: ["wheat_seeds"],
+    tall_grass: ["wheat_seeds"],
+    fern: ["wheat_seeds"],
+};
+
+// Farmable crops: the crop block, what to plant, and what harvesting gives.
+const CROPS = [
+    { block: "wheat", seed: "wheat_seeds", produces: ["wheat", "wheat_seeds"] },
+    { block: "carrots", seed: "carrot", produces: ["carrot"] },
+    { block: "potatoes", seed: "potato", produces: ["potato"] },
+    { block: "beetroots", seed: "beetroot_seeds", produces: ["beetroot", "beetroot_seeds"] },
+];
+const HOES = ["wooden_hoe", "stone_hoe", "iron_hoe", "golden_hoe", "diamond_hoe", "netherite_hoe"];
+
+// Blocks the pathfinder must never dig through on its way somewhere.
+const NEVER_BREAK = [
+    "farmland", "wheat", "carrots", "potatoes", "beetroots", "melon_stem", "pumpkin_stem",
+    "chest", "trapped_chest", "barrel", "ender_chest", "furnace", "blast_furnace", "smoker",
+    "crafting_table", "white_bed", "red_bed", "oak_door", "spruce_door", "birch_door",
+    "glass", "glass_pane", "torch", "wall_torch", "lantern", "bookshelf", "enchanting_table",
+    "anvil", "brewing_stand", "beacon", "spawner",
+];
 const NATURAL_PATTERNS = [
     /_log$/, // all tree logs
     /^(crimson|warped)_stem$/,
@@ -93,7 +119,7 @@ const BAD_FOOD = new Set([
     "rotten_flesh", "spider_eye", "poisonous_potato", "pufferfish",
     "suspicious_stew", "chorus_fruit", "chicken",
 ]);
-const FOOD_SOURCES = ["beef", "porkchop", "mutton", "chicken", "rabbit"];
+const FOOD_SOURCES = ["beef", "porkchop", "mutton", "chicken", "rabbit", "bread", "carrot"];
 
 function createKnowledge(bot, config) {
     const registry = bot.registry;
@@ -113,9 +139,10 @@ function createKnowledge(bot, config) {
         return registry.blocksArray.filter(
             (block) =>
                 isMineable(block.name) &&
-                (block.drops || []).some(
+                ((block.drops || []).some(
                     (d) => (typeof d === "number" ? d : d.drop?.id ?? d.drop) === item.id
-                )
+                ) ||
+                    (EXTRA_BLOCK_DROPS[block.name] || []).includes(itemName))
         );
     }
 
@@ -162,6 +189,24 @@ function createKnowledge(bot, config) {
         return Object.keys(block.harvestTools || {}).map((id) => registry.items[id].name);
     }
 
+    function cropFor(itemName) {
+        if (config.farm === false) return null;
+        return CROPS.find((crop) => crop.produces.includes(itemName)) || null;
+    }
+
+    function cropMaxAge(blockName) {
+        const age = registry.blocksByName[blockName].states.find((s) => s.name === "age");
+        return age.num_values - 1;
+    }
+
+    function isMatureCrop(block) {
+        return Number(block.getProperties().age) >= cropMaxAge(block.name);
+    }
+
+    function neverBreakIds() {
+        return NEVER_BREAK.map((name) => registry.blocksByName[name]?.id).filter((id) => id !== undefined);
+    }
+
     function isFood(name) {
         return Boolean(registry.foodsByName[name]);
     }
@@ -178,6 +223,12 @@ function createKnowledge(bot, config) {
         recipeIngredients,
         smeltInputs,
         harvestTools,
+        cropFor,
+        cropMaxAge,
+        isMatureCrop,
+        neverBreakIds,
+        CROPS,
+        HOES,
         fuelValue,
         isFood,
         foodPoints,

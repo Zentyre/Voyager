@@ -1,6 +1,6 @@
 // Lightweight, LLM-free Minecraft bot built on the same Mineflayer stack
-// Voyager uses. Ask for items and it mines, crafts, smelts, or hunts for them,
-// fighting off mobs and eating along the way.
+// Voyager uses. Ask for items and it mines, crafts, smelts, farms, or hunts for
+// them, wearing armor, fighting off mobs and eating along the way.
 //
 //   node gatherer.js                          # uses config.json
 //   node gatherer.js oak_log:64 iron_pickaxe:1
@@ -20,6 +20,7 @@ const { createKnowledge } = require("./lib/knowledge");
 const { createPlanner } = require("./lib/planner");
 const { installActions } = require("./lib/actions");
 const { installSurvival } = require("./lib/survival");
+const { installFarming } = require("./lib/farming");
 
 const DEFAULTS = {
     host: "localhost",
@@ -27,7 +28,8 @@ const DEFAULTS = {
     username: "Gatherer",
     auth: "offline",
     version: false,
-    owner: null,
+    owner: "Zentyre",
+    commandPrefix: "!",
     viewDistance: "tiny",
     searchRadius: 48,
     stationRadius: 24,
@@ -42,6 +44,10 @@ const DEFAULTS = {
     fleeHealth: 6,
     eatBelow: 14,
     findFoodBelow: 8,
+    autoArmor: true,
+    farm: true,
+    farmSize: 9,
+    farmWaitMinutes: 30,
     returnHome: true,
     quitWhenDone: false,
     chatter: true,
@@ -105,10 +111,13 @@ bot.once("spawn", () => {
     ctx.planner = createPlanner(ctx);
     installActions(ctx);
     installSurvival(ctx);
+    installFarming(ctx);
 
     // Keep path computation cheap: short per-tick budget and a hard timeout.
     const movements = new Movements(bot);
     movements.allowParkour = false;
+    // Never dig through farms, chests, beds, doors, etc. on the way somewhere.
+    for (const id of ctx.kb.neverBreakIds()) movements.blocksCantBreak.add(id);
     bot.pathfinder.setMovements(movements);
     bot.pathfinder.thinkTimeout = 5000;
     bot.pathfinder.tickTimeout = 20;
@@ -117,9 +126,10 @@ bot.once("spawn", () => {
     bot.collectBlock.chestLocations = [];
 
     ctx.home = bot.entity.position.clone();
+    ctx.equipArmor().catch(() => {});
     log(`Spawned at ${ctx.fmt(ctx.home)} on ${bot.version}.`);
     if (ctx.queue.length > 0) runQueue();
-    else log("Nothing queued. Say 'get <item> [count]' in chat.");
+    else log(`Nothing queued. Say '${config.commandPrefix}get <item> [count]' in chat.`);
 });
 
 bot.on("death", () => {
@@ -200,10 +210,30 @@ function statusText() {
     return `Getting ${t.item}: ${Math.min(progress(t), t.count)}/${t.count}. ${ctx.queue.length} more queued. ${vitals}`;
 }
 
+// For one-off jobs outside the queue (farming, walking somewhere).
+async function runExclusive(label, fn) {
+    if (ctx.busy) return say(`I'm busy. Say ${config.commandPrefix}stop first.`);
+    ctx.busy = true;
+    try {
+        await fn();
+    } catch (err) {
+        if (!(err instanceof ctx.Stopped)) say(`Couldn't ${label}: ${err.message}`);
+    } finally {
+        ctx.busy = false;
+        ctx.stopRequested = false;
+    }
+}
+
+const ARMOR_PIECES = ["helmet", "chestplate", "leggings", "boots"];
+
 // ---------- commands (chat or terminal, plain text, no LLM) ----------
 
-const HELP =
-    "Commands: get <item> [count] | plan <item> | stop | status | queue | inv | eat | come | deposit | home | quit";
+const HELP = "Commands: " + [
+    "get <item> [count]", "plan <item>", "farm", "plant <crop> [plots]", "armor [material]",
+    "stop", "status", "queue", "inv", "eat", "come", "deposit", "home", "quit",
+]
+    .map((c) => config.commandPrefix + c)
+    .join(" | ");
 
 async function handleCommand(text, fromPlayer) {
     if (!ctx.planner) return; // not spawned yet
@@ -214,7 +244,7 @@ async function handleCommand(text, fromPlayer) {
         case "craft":
         case "smelt": {
             const item = args[0];
-            if (!item) return say("Usage: get <item> [count]");
+            if (!item) return say(`Usage: ${config.commandPrefix}get <item> [count]`);
             if (!bot.registry.itemsByName[item]) return say(`There's no item called ${item}.`);
             const count = parseInt(args[1] || "1", 10);
             ctx.queue.push({ item, count });
@@ -224,10 +254,44 @@ async function handleCommand(text, fromPlayer) {
         }
         case "plan": {
             const item = args[0];
-            if (!item || !bot.registry.itemsByName[item]) return say("Usage: plan <item>");
+            if (!item || !bot.registry.itemsByName[item]) return say(`Usage: ${config.commandPrefix}plan <item>`);
             const lines = ctx.planner.explain(item);
             lines.forEach((line) => log(line));
             if (fromPlayer) lines.slice(0, 5).forEach((line) => bot.chat(line.trim()));
+            break;
+        }
+        case "farm":
+            // Harvest and replant every ripe crop nearby.
+            await runExclusive("farm", async () => {
+                const n = await ctx.harvestCrops();
+                say(n ? `Harvested and replanted ${n} crops.` : "No ripe crops nearby.");
+            });
+            break;
+        case "plant": {
+            const name = args[0];
+            const crop = ctx.kb.CROPS.find(
+                (c) => c.block === name || c.seed === name || c.produces.includes(name)
+            );
+            if (!crop) return say(`Usage: ${config.commandPrefix}plant <wheat|carrot|potato|beetroot> [plots]`);
+            const plots = parseInt(args[1] || String(config.farmSize), 10);
+            await runExclusive("plant", () => ctx.plantCrop(crop, plots));
+            break;
+        }
+        case "armor": {
+            const material = args[0];
+            if (!material) {
+                await ctx.safely(ctx.equipArmor);
+                const worn = ctx.equipped().map((i) => i.name);
+                say(worn.length ? `Wearing ${worn.join(", ")}.` : "No armor to wear.");
+                break;
+            }
+            const pieces = ARMOR_PIECES.map((p) => `${material}_${p}`).filter(
+                (name) => bot.registry.itemsByName[name] && ctx.countItem(name) === 0
+            );
+            if (pieces.length === 0) return say(`Already have ${material} armor, or no such material.`);
+            for (const item of pieces) ctx.queue.push({ item, count: 1 });
+            say(`Queued ${pieces.join(", ")}. I'll put them on as I get them.`);
+            runQueue();
             break;
         }
         case "stop":
@@ -253,7 +317,7 @@ async function handleCommand(text, fromPlayer) {
         case "come": {
             const player = fromPlayer && bot.players[fromPlayer]?.entity;
             if (!player) return say("I can't see you.");
-            await ctx.safely(() => ctx.goTo(player.position, 2));
+            await runExclusive("come", () => ctx.goTo(player.position, 2));
             break;
         }
         case "deposit":
@@ -274,12 +338,31 @@ async function handleCommand(text, fromPlayer) {
     }
 }
 
+// Chat commands need the prefix (e.g. "!get oak_log 16"); whispers and the
+// terminal accept them with or without it.
+function stripPrefix(text) {
+    const prefix = config.commandPrefix || "";
+    return prefix && text.startsWith(prefix) ? text.slice(prefix.length) : null;
+}
+
+function fromOwner(username) {
+    return username !== bot.username && (!config.owner || username === config.owner);
+}
+
 bot.on("chat", (username, message) => {
-    if (username === bot.username) return;
-    if (config.owner && username !== config.owner) return;
-    handleCommand(message, username).catch((err) => log(err.message));
+    if (!fromOwner(username)) return;
+    const command = config.commandPrefix ? stripPrefix(message.trim()) : message;
+    if (command === null) return;
+    handleCommand(command, username).catch((err) => log(err.message));
+});
+
+bot.on("whisper", (username, message) => {
+    if (!fromOwner(username)) return;
+    handleCommand(stripPrefix(message.trim()) ?? message, username).catch((err) => log(err.message));
 });
 
 readline
     .createInterface({ input: process.stdin })
-    .on("line", (line) => handleCommand(line, null).catch((err) => log(err.message)));
+    .on("line", (line) =>
+        handleCommand(stripPrefix(line.trim()) ?? line, null).catch((err) => log(err.message))
+    );

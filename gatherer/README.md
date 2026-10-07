@@ -1,8 +1,8 @@
 # Gatherer: LLM-free Minecraft bot
 
 A small Minecraft bot that gets you the items you ask for. It mines, crafts,
-smelts and hunts as needed, fights off mobs and eats when hungry. It uses the
-same Mineflayer libraries as Voyager, but nothing else:
+smelts, farms and hunts as needed, wears armor, fights off mobs and eats when
+hungry. It uses the same Mineflayer libraries as Voyager, but nothing else:
 
 - **No LLM / no API key.** Decisions come from Minecraft's own data tables
   (`minecraft-data`) plus a small cost-based search. To get you an iron pickaxe it
@@ -47,14 +47,16 @@ Use item names as they appear in `/give`: `raw_iron`, `iron_ingot`,
 | **Craft** | Uses the game's recipe list. Gathers ingredients recursively and places a crafting table if none is nearby. |
 | **Tools** | If a block needs a better pickaxe than it has, it makes one first (wood → stone → iron).    |
 | **Smelt** | Ores, sand → glass, cobblestone → stone, logs → charcoal, raw meat → cooked, etc. Builds and places a furnace and collects fuel (coal or planks) if needed. |
+| **Farm**  | Harvests ripe wheat, carrots, potatoes and beetroots and replants them. If there's no field, it makes a hoe, gets seeds (wheat seeds from grass), tills up to `farmSize` plots next to water, plants them and waits for them to grow, using bone meal if it has any. Bread and other crop recipes then work. |
+| **Armor** | Wears the best armor it carries (leather → gold → chainmail → iron → diamond → netherite) and a shield in its off-hand. Upgrades as soon as it picks up something better. |
 | **Hunt**  | Items that come from mobs (leather, beef, wool, feathers, string, bones…). It hunts cows, pigs, sheep, chickens, rabbits, goats, spiders, zombies, skeletons and slimes. It never hunts pets, horses, villagers, golems or creepers. |
 | **Fight** | Attacks hostile mobs that come within `defendRadius`. Runs from creepers, and runs from anything when health drops to `fleeHealth`. Leaves endermen and piglins alone. |
 | **Eat**   | Eats the best food it carries when hunger drops to `eatBelow`. If it has none and gets hungry (`findFoodBelow`), it hunts an animal for meat. |
 
-Use `plan <item>` to see what it would do without doing it:
+Use `!plan <item>` to see what it would do without doing it:
 
 ```
-plan stone_pickaxe
+!plan stone_pickaxe
 stone_pickaxe: craft from 3 cobblestone, 2 stick (crafting table)
   crafting_table: craft from 4 birch_planks
     birch_planks: craft from 1 birch_log
@@ -70,20 +72,27 @@ table or furnace within `stationRadius`.
 
 ## Commands
 
-Type these in game chat (only `owner` is obeyed if set) or in the terminal:
+In game chat, commands start with `!` and only the owner (`Zentyre` by default)
+is obeyed. Whispers (`/msg Gatherer get oak_log`) and the terminal work with or
+without the `!`.
 
-| Command                 | What it does                                  |
-|-------------------------|-----------------------------------------------|
-| `get <item> [count]`    | Add a task to the queue and start (`gather`, `craft`, `smelt` also work) |
-| `plan <item>`           | Show how it would get the item, without doing it |
-| `stop`                  | Stop now and clear the queue                  |
-| `status` / `queue`      | Show progress, health and food / queued tasks |
-| `inv`                   | List inventory                                |
-| `eat`                   | Eat now if hungry                             |
-| `come`                  | Walk to you (chat only)                       |
-| `deposit`               | Put requested items in the configured chest   |
-| `home`                  | Return to where it spawned                    |
-| `quit`                  | Disconnect                                    |
+| Command                     | What it does                                  |
+|-----------------------------|-----------------------------------------------|
+| `!get <item> [count]`       | Add a task to the queue and start (`!gather`, `!craft`, `!smelt` also work) |
+| `!plan <item>`              | Show how it would get the item, without doing it |
+| `!farm`                     | Harvest and replant every ripe crop nearby    |
+| `!plant <crop> [plots]`     | Till and plant a field: `wheat`, `carrot`, `potato` or `beetroot` |
+| `!armor`                    | Put on the best armor it has and say what it's wearing |
+| `!armor <material>`         | Get and wear a full set: `leather`, `golden`, `iron` or `diamond` |
+| `!stop`                     | Stop now and clear the queue                  |
+| `!status` / `!queue`        | Show progress, health and food / queued tasks |
+| `!inv`                      | List inventory                                |
+| `!eat`                      | Eat now if hungry                             |
+| `!come`                     | Walk to you (chat only)                       |
+| `!deposit`                  | Put requested items in the configured chest   |
+| `!home`                     | Return to where it spawned                    |
+| `!help`                     | List commands                                 |
+| `!quit`                     | Disconnect                                    |
 
 ## Config
 
@@ -92,7 +101,8 @@ Type these in game chat (only `owner` is obeyed if set) or in the terminal:
 | `host`, `port`       | `localhost`, `25565` | Server address                                            |
 | `username`, `auth`   | `Gatherer`, `offline` | Bot account                                              |
 | `version`            | `false`       | Minecraft version, `false` = auto-detect                          |
-| `owner`              | `null`        | Only take chat commands from this player                          |
+| `owner`              | `"Zentyre"`   | Only take commands from this player (`null` = anyone)             |
+| `commandPrefix`      | `"!"`         | Chat commands must start with this                                |
 | `viewDistance`       | `"tiny"`      | Chunks requested from server, lower = less RAM                    |
 | `searchRadius`       | `48`          | How far (blocks) to look for resources and mobs                   |
 | `stationRadius`      | `24`          | Reuse a crafting table / furnace within this distance             |
@@ -107,6 +117,10 @@ Type these in game chat (only `owner` is obeyed if set) or in the terminal:
 | `fleeHealth`         | `6`           | Run away instead of fighting at or below this health (of 20)      |
 | `eatBelow`           | `14`          | Eat when hunger is at or below this (of 20)                       |
 | `findFoodBelow`      | `8`           | Go hunting for food when hungry with nothing to eat               |
+| `autoArmor`          | `true`        | Wear the best armor and shield it carries                         |
+| `farm`               | `true`        | Allow farming for crops                                           |
+| `farmSize`           | `9`           | How many plots to till and plant when starting a field            |
+| `farmWaitMinutes`    | `30`          | Give up waiting for crops to grow after this long                 |
 | `returnHome`         | `true`        | Walk back to the spawn point after the queue is done              |
 | `quitWhenDone`       | `false`       | Disconnect when the queue is done                                 |
 | `chatter`            | `true`        | Post progress messages in game chat                               |
@@ -119,11 +133,15 @@ Type these in game chat (only `owner` is obeyed if set) or in the terminal:
   But a cabin built from logs or cobblestone looks the same as natural blocks.
   Set `protectRadius` to keep it away from your base.
 - It can't tell farm animals from wild ones. Turn `hunt` off if your pens are within `searchRadius`.
-- It can't craft items whose ingredients only come from farming (bread, cake…),
-  trading, or the Nether/End. `plan` will say "no known way to get this".
-- It can't brew, enchant, build, or put on armour. Its melee combat is simple
-  and it can still die, so keep valuables out of its inventory or use
-  `/gamerule keepInventory true`.
+- When the pathfinder digs its way somewhere, it never breaks farmland,
+  crops, chests, furnaces, crafting tables, beds, doors, glass or torches.
+- Carrots and potatoes can't be found in the wild, so it needs at least one
+  to start a field. A new field needs water within 4 blocks. Crops take 5–30
+  minutes to grow, and the bot stays nearby while they do.
+- It can't get items that only come from trading or the Nether/End, or
+  breeding, brewing or enchanting. `!plan` will say "no known way to get this".
+- Its melee combat is simple and it can still die, so keep valuables out of
+  its inventory or use `/gamerule keepInventory true`.
 
 ## Code layout
 
@@ -133,5 +151,6 @@ Type these in game chat (only `owner` is obeyed if set) or in the terminal:
 | `lib/knowledge.js`  | Lookup tables: drops, recipes, smelting, fuel, food, mobs |
 | `lib/planner.js`    | Cost-based choice between mine / craft / smelt / hunt     |
 | `lib/actions.js`    | Doing it: mining, crafting, smelting, hunting, chests     |
-| `lib/survival.js`   | Fighting, fleeing, eating                                 |
+| `lib/survival.js`   | Armor, fighting, fleeing, eating                          |
+| `lib/farming.js`    | Harvesting, replanting, planting new fields               |
 | `lib/context.js`    | Shared state and helpers                                  |

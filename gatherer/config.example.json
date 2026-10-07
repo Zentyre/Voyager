@@ -4,7 +4,8 @@
     "username": "Gatherer",
     "auth": "offline",
     "version": false,
-    "owner": "YourMinecraftName",
+    "owner": "Zentyre",
+    "commandPrefix": "!",
 
     "viewDistance": "tiny",
     "searchRadius": 48,
@@ -22,6 +23,11 @@
     "fleeHealth": 6,
     "eatBelow": 14,
     "findFoodBelow": 8,
+    "autoArmor": true,
+
+    "farm": true,
+    "farmSize": 9,
+    "farmWaitMinutes": 30,
 
     "returnHome": true,
     "quitWhenDone": false,
