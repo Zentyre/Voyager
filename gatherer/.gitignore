@@ -1,5 +1,6 @@
 node_modules/
 config.json
 memory/
+accounts/
 memory.json
 memory.json.tmp

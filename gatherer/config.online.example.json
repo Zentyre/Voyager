@@ -1,0 +1,18 @@
+{
+    "host": "your.server.address",
+    "port": 25565,
+    "auth": "microsoft",
+    "owner": "Zentyre",
+    "commandPrefix": "!",
+
+    "viewDistance": "normal",
+    "searchRadius": 110,
+    "chest": null,
+
+    "bots": [
+        { "username": "Miner" },
+        { "username": "Farmer" },
+        { "username": "Hunter" },
+        { "username": "Guard" }
+    ]
+}

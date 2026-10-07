@@ -32,7 +32,9 @@ function createContext(bot, config) {
         placedStations: [], // crafting tables / furnaces we put down
     };
 
-    ctx.log = (message) => console.log(`[${config.username}] ${message}`);
+    // Prefix with the in-game name once logged in (Microsoft accounts have
+    // their own names), the config label before that.
+    ctx.log = (message) => console.log(`[${bot.username || config.username}] ${message}`);
     ctx.say = (message) => {
         ctx.log(message);
         if (bot.entity && config.chatter !== false) bot.chat(message);
