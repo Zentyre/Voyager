@@ -23,6 +23,7 @@ const { createLearning } = require("./learning");
 const { installArchery } = require("./archery");
 const { installBodyguard } = require("./bodyguard");
 const { patchBot } = require("./compat");
+const { installModSupport } = require("./mods");
 
 // bot.findBlocks skips chunk sections whose palette lacks the block, but a
 // section made of one block (all air, say) has no palette, so it checked all
@@ -108,6 +109,8 @@ function createBot(config, crew) {
     ctx.crew = crew;
     ctx.queue.push(...config.tasks);
     const { log, say } = ctx;
+    if (bot.registry) installModSupport(bot, log);
+    else bot.once("inject_allowed", () => installModSupport(bot, log));
 
     bot.once("spawn", () => {
         ctx.kb = createKnowledge(bot, config);
@@ -128,6 +131,8 @@ function createBot(config, crew) {
         movements.allowParkour = false;
         // Never dig through farms, chests, beds, doors, etc. on the way somewhere.
         for (const id of ctx.kb.neverBreakIds()) movements.blocksCantBreak.add(id);
+        const modded = bot.registry.blocksByName.modded_block;
+        if (modded) movements.blocksCantBreak.add(modded.id);
         bot.pathfinder.setMovements(movements);
         bot.pathfinder.thinkTimeout = 5000;
         bot.pathfinder.tickTimeout = 20;

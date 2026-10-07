@@ -90,6 +90,12 @@ no ViaVersion needed. See [compat/README.md](compat/README.md) for how it was bu
 and tested. For anything newer than 26.3, the bot connects as the newest version
 it knows and tells you; ViaVersion + ViaBackwards on the server can bridge the gap.
 
+**Modded servers (Fabric, NeoForge):** the bot can't load mods; they are Java
+code for the real game client. It joins as a vanilla client, so the server must
+let vanilla clients in. Blocks added by mods are treated as solid blocks the bot
+never breaks, and after joining it lists the mods the server announces
+(`Server: fabric. Mods it announces: ...`).
+
 On a LAN world or an `online-mode=false` server, leave `"auth": "offline"` and
 any names work with no accounts. Anyone can then join as any name, including
 yours, though.
@@ -330,6 +336,7 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `lib/crew.js`       | Crew coordinator (main thread) and its link to each bot   |
 | `lib/crew-worker.js`| Worker-thread entry point for a crew member               |
 | `lib/compat.js`     | Minecraft 26.3 support: registers `compat/26.3` data, adapts packets |
+| `lib/mods.js`       | Modded servers: unknown modded blocks, list of the server's mods |
 | `compat/`           | Generated 26.3 data and the script that builds it         |
 | `lib/knowledge.js`  | Lookup tables: drops, recipes, smelting, crops, breeding food, potions, fuel, food, mobs |
 | `lib/planner.js`    | Cost-based choice between mine / craft / smelt / farm / hunt |
