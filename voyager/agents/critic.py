@@ -1,20 +1,21 @@
 from voyager.prompts import load_prompt
 from voyager.utils.json_utils import fix_and_parse_json
-from langchain.chat_models import ChatOpenAI
-from langchain.schema import HumanMessage, SystemMessage
+from voyager.llm import ChatModel, HumanMessage, SystemMessage
 
 
 class CriticAgent:
     def __init__(
         self,
-        model_name="gpt-3.5-turbo",
-        temperature=0,
+        model_name="claude-opus-5-5",
+        temperature=None,
+        effort="medium",
         request_timout=120,
         mode="auto",
     ):
-        self.llm = ChatOpenAI(
+        self.llm = ChatModel(
             model_name=model_name,
             temperature=temperature,
+            effort=effort,
             request_timeout=request_timout,
         )
         assert mode in ["auto", "manual"]
@@ -36,10 +37,13 @@ class CriticAgent:
         inventory_used = events[-1][1]["status"]["inventoryUsed"]
         inventory = events[-1][1]["inventory"]
 
+        chat_messages = []
         for i, (event_type, event) in enumerate(events):
             if event_type == "onError":
                 print(f"\033[31mCritic Agent: Error occurs {event['onError']}\033[0m")
                 return None
+            if event_type == "onChat":
+                chat_messages.append(event["onChat"])
 
         observation = ""
 
@@ -65,6 +69,13 @@ class CriticAgent:
             observation += f"Inventory ({inventory_used}/36): Empty\n\n"
 
         observation += chest_observation
+
+        if chat_messages:
+            # the last messages are the most informative about the outcome
+            chat_log = "\n".join(chat_messages[-30:])
+            observation += f"Chat log:\n{chat_log}\n\n"
+        else:
+            observation += "Chat log: None\n\n"
 
         observation += f"Task: {task}\n\n"
 

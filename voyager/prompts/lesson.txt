@@ -1,0 +1,5 @@
+You are reviewing a Minecraft bot's attempts at a task. The bot writes Mineflayer JavaScript programs; after each attempt it saw the execution errors and a critique.
+
+Write the lesson a future attempt at a similar task should know, in at most 3 short sentences. Name the concrete cause (a missing prerequisite item, a wrong item or block name, a Mineflayer API misuse, a place that was unreachable, a step that was skipped) and what to do instead. If the task succeeded, say what change made it work.
+
+Do not restate the task. Do not give generic advice such as "check your code" or "be careful". Reply with the lesson only.

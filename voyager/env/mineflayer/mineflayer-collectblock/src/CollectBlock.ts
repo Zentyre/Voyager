@@ -68,11 +68,11 @@ async function collectAll(
                             // @ts-ignore
                         } else if (err.name === "NoItem") {
                             const properties =
-                                bot.registry.blocksByName[closest.name];
+                                bot.registry.blocksByName[String(closest.name)];
                             const leastTool = Object.keys(
-                                properties.harvestTools
+                                properties.harvestTools ?? {}
                             )[0];
-                            const item = bot.registry.items[leastTool];
+                            const item = bot.registry.items[Number(leastTool)];
                             bot.chat(
                                 `I need at least a ${item.name} to mine ${closest.name}!  Skip it!`
                             );
@@ -446,6 +446,6 @@ export class CollectBlock {
             // @ts-expect-error
             this.bot.once("collectBlock_finished", cb);
         }
-        await once(this.bot, "collectBlock_finished");
+        await once(this.bot as unknown as NodeJS.EventEmitter, "collectBlock_finished");
     }
 }

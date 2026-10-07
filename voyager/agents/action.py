@@ -3,9 +3,7 @@ import time
 
 import voyager.utils as U
 from javascript import require
-from langchain.chat_models import ChatOpenAI
-from langchain.prompts import SystemMessagePromptTemplate
-from langchain.schema import AIMessage, HumanMessage, SystemMessage
+from voyager.llm import ChatModel, HumanMessage, Message, SystemMessage
 
 from voyager.prompts import load_prompt
 from voyager.control_primitives_context import load_control_primitives_context
@@ -14,15 +12,18 @@ from voyager.control_primitives_context import load_control_primitives_context
 class ActionAgent:
     def __init__(
         self,
-        model_name="gpt-3.5-turbo",
-        temperature=0,
+        model_name="claude-opus-5-5",
+        temperature=None,
+        effort="high",
         request_timout=120,
         ckpt_dir="ckpt",
         resume=False,
         chat_log=True,
         execution_error=True,
+        cheats=True,
     ):
         self.ckpt_dir = ckpt_dir
+        self.cheats = cheats
         self.chat_log = chat_log
         self.execution_error = execution_error
         U.f_mkdir(f"{ckpt_dir}/action")
@@ -31,9 +32,10 @@ class ActionAgent:
             self.chest_memory = U.load_json(f"{ckpt_dir}/action/chest_memory.json")
         else:
             self.chest_memory = {}
-        self.llm = ChatOpenAI(
+        self.llm = ChatModel(
             model_name=model_name,
             temperature=temperature,
+            effort=effort,
             request_timeout=request_timout,
         )
 
@@ -82,25 +84,25 @@ class ActionAgent:
             "placeItem",
             "smeltItem",
             "killMob",
+            "useChest",
+            "mineflayer",
         ]
-        if not self.llm.model_name == "gpt-3.5-turbo":
-            base_skills += [
-                "useChest",
-                "mineflayer",
-            ]
         programs = "\n\n".join(load_control_primitives_context(base_skills) + skills)
         response_format = load_prompt("action_response_format")
-        system_message_prompt = SystemMessagePromptTemplate.from_template(
-            system_template
-        )
-        system_message = system_message_prompt.format(
+        content = system_template.format(
             programs=programs, response_format=response_format
         )
-        assert isinstance(system_message, SystemMessage)
-        return system_message
+        if not self.cheats:
+            content += (
+                "\n\nYou are playing as a normal survival player on a server, "
+                "possibly with other people. Chat commands (anything starting "
+                "with /) are not available. Do not break, take from or "
+                "destroy blocks, chests or builds that other players made."
+            )
+        return SystemMessage(content=content)
 
     def render_human_message(
-        self, *, events, code="", task="", context="", critique=""
+        self, *, events, code="", task="", context="", critique="", lessons=""
     ):
         chat_messages = []
         error_messages = []
@@ -125,6 +127,7 @@ class ActionAgent:
                 equipment = event["status"]["equipment"]
                 inventory_used = event["status"]["inventoryUsed"]
                 inventory = event["inventory"]
+                version = event["status"].get("version")
                 assert i == len(events) - 1, "observe must be the last event"
 
         observation = ""
@@ -147,6 +150,9 @@ class ActionAgent:
                 observation += f"Chat log: {chat_log}\n\n"
             else:
                 observation += f"Chat log: None\n\n"
+
+        if version:
+            observation += f"Minecraft version: {version}\n\n"
 
         observation += f"Biome: {biome}\n\n"
 
@@ -196,21 +202,26 @@ class ActionAgent:
         else:
             observation += f"Critique: None\n\n"
 
+        observation += lessons
+
         return HumanMessage(content=observation)
 
     def process_ai_message(self, message):
-        assert isinstance(message, AIMessage)
+        assert isinstance(message, Message) and message.role == "assistant"
 
         retry = 3
         error = None
         while retry > 0:
             try:
                 babel = require("@babel/core")
-                babel_generator = require("@babel/generator").default
+                generator_module = require("@babel/generator")
+                # Babel 7 exports the generator as `default`, Babel 8 as `generate`
+                babel_generator = generator_module.default or generator_module.generate
 
                 code_pattern = re.compile(r"```(?:javascript|js)(.*?)```", re.DOTALL)
                 code = "\n".join(code_pattern.findall(message.content))
-                parsed = babel.parse(code)
+                # Babel 8 made parse() async-only; parseSync works in 7 and 8
+                parsed = babel.parseSync(code)
                 functions = []
                 assert len(list(parsed.program.body)) > 0, "No functions found"
                 for i, node in enumerate(parsed.program.body):

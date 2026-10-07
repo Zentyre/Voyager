@@ -1,10 +1,14 @@
 const fs = require("fs");
 const express = require("express");
-const bodyParser = require("body-parser");
 const mineflayer = require("mineflayer");
 
 const skills = require("./lib/skillLoader");
-const { initCounter, getNextTime } = require("./lib/utils");
+const {
+    initCounter,
+    getNextTime,
+    runCommand,
+    setGameRule,
+} = require("./lib/utils");
 const obs = require("./lib/observation/base");
 const OnChat = require("./lib/observation/onChat");
 const OnError = require("./lib/observation/onError");
@@ -19,20 +23,49 @@ let bot = null;
 
 const app = express();
 
-app.use(bodyParser.json({ limit: "50mb" }));
-app.use(bodyParser.urlencoded({ limit: "50mb", extended: false }));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: false }));
+
+// Whether the server tick loop is frozen with /tick freeze (1.20.3+), which
+// stops the world while the agent waits for the language model.
+let tickFrozen = false;
+
+// Blocks a normal-player bot picks back up after placing them during a step.
+const WORKSTATIONS = ["crafting_table", "furnace"];
 
 app.post("/start", (req, res) => {
     if (bot) onDisconnect("Restarting bot");
     bot = null;
     console.log(req.body);
+    tickFrozen = false;
+    const auth = req.body.auth || "offline";
     bot = mineflayer.createBot({
-        host: "localhost", // minecraft server ip
+        host: req.body.host || "localhost", // minecraft server ip
         port: req.body.port, // minecraft server port
-        username: "bot",
-        disableChatSigning: true,
+        // for "microsoft" auth this only names the cached login; the in-game
+        // name comes from the account
+        username: req.body.username || "bot",
+        auth,
+        profilesFolder: req.body.authCacheDir || undefined,
+        onMsaCode: (data) => {
+            console.log(
+                `[voyager-auth] Sign the bot in to its Microsoft account: open ` +
+                    `${data.verification_uri} and enter the code ${data.user_code}`
+            );
+        },
+        // false lets mineflayer detect the server version from its ping
+        version: req.body.version || false,
+        // online-mode servers may require signed chat; offline bots cannot sign
+        disableChatSigning: auth !== "microsoft",
         checkTimeoutInterval: 60 * 60 * 1000,
     });
+    // cheats: the bot is an operator and may use commands such as /give and /tp.
+    // Without cheats it plays as a normal survival player.
+    bot.voyagerCheats = req.body.cheats !== false;
+    // whether bot.chat messages from skills are sent to the server's chat;
+    // they always reach Voyager's chat log
+    bot.voyagerChatToServer =
+        req.body.chatToServer ?? bot.voyagerCheats;
     bot.once("error", onConnectionFailed);
 
     // Event subscriptions
@@ -51,16 +84,19 @@ app.post("/start", (req, res) => {
 
     bot.once("spawn", async () => {
         bot.removeListener("error", onConnectionFailed);
+        console.log(`Spawned as ${bot.username} (cheats: ${bot.voyagerCheats})`);
+        // in case a previous bot left the world frozen
+        runCommand(bot, "/tick unfreeze");
         let itemTicks = 1;
-        if (req.body.reset === "hard") {
-            bot.chat("/clear @s");
-            bot.chat("/kill @s");
+        if (req.body.reset === "hard" && bot.voyagerCheats) {
+            runCommand(bot, "/clear @s");
+            runCommand(bot, "/kill @s");
             const inventory = req.body.inventory ? req.body.inventory : {};
             const equipment = req.body.equipment
                 ? req.body.equipment
                 : [null, null, null, null, null, null];
             for (let key in inventory) {
-                bot.chat(`/give @s minecraft:${key} ${inventory[key]}`);
+                runCommand(bot, `/give @s minecraft:${key} ${inventory[key]}`);
                 itemTicks += 1;
             }
             const equipmentNames = [
@@ -74,7 +110,8 @@ app.post("/start", (req, res) => {
             for (let i = 0; i < 6; i++) {
                 if (i === 4) continue;
                 if (equipment[i]) {
-                    bot.chat(
+                    runCommand(
+                        bot,
                         `/item replace entity @s ${equipmentNames[i]} with minecraft:${equipment[i]}`
                     );
                     itemTicks += 1;
@@ -83,7 +120,8 @@ app.post("/start", (req, res) => {
         }
 
         if (req.body.position) {
-            bot.chat(
+            runCommand(
+                bot,
                 `/tp @s ${req.body.position.x} ${req.body.position.y} ${req.body.position.z}`
             );
         }
@@ -99,7 +137,9 @@ app.post("/start", (req, res) => {
         const tool = require("mineflayer-tool").plugin;
         const collectBlock = require("mineflayer-collectblock").plugin;
         const pvp = require("mineflayer-pvp").plugin;
-        const minecraftHawkEye = require("minecrafthawkeye");
+        const hawkEyeModule = require("minecrafthawkeye");
+        // 1.3.7+ exports the plugin as `default`
+        const minecraftHawkEye = hawkEyeModule.default || hawkEyeModule;
         bot.loadPlugin(pathfinder);
         bot.loadPlugin(tool);
         bot.loadPlugin(collectBlock);
@@ -121,8 +161,7 @@ app.post("/start", (req, res) => {
         ]);
         skills.inject(bot);
 
-        if (req.body.spread) {
-            bot.chat(`/spreadplayers ~ ~ 0 300 under 80 false @s`);
+        if (req.body.spread && runCommand(bot, "/spreadplayers ~ ~ 0 300 under 80 false @s")) {
             await bot.waitForTicks(bot.waitTicks);
         }
 
@@ -130,8 +169,8 @@ app.post("/start", (req, res) => {
         res.json(bot.observe());
 
         initCounter(bot);
-        bot.chat("/gamerule keepInventory true");
-        bot.chat("/gamerule doDaylightCycle false");
+        setGameRule(bot, "keepInventory", true);
+        setGameRule(bot, "doDaylightCycle", false);
     });
 
     function onConnectionFailed(e) {
@@ -222,7 +261,7 @@ app.post("/step", async (req, res) => {
         }
     }
 
-    bot.on("physicTick", onTick);
+    bot.on("physicsTick", onTick);
 
     // initialize fail count
     let _craftItemFailCount = 0;
@@ -236,19 +275,25 @@ app.post("/step", async (req, res) => {
     const programs = req.body.programs;
     bot.cumulativeObs = [];
     await bot.waitForTicks(bot.waitTicks);
+    const workstationsBefore = findWorkstations();
     const r = await evaluateCode(code, programs);
     process.off("uncaughtException", otherError);
     if (r !== "success") {
         bot.emit("error", handleError(r));
     }
-    await returnItems();
+    if (bot.voyagerCheats) {
+        await returnItems();
+        setRespawnPoint();
+    } else {
+        await pickUpOwnWorkstations(workstationsBefore);
+    }
     // wait for last message
     await bot.waitForTicks(bot.waitTicks);
     if (!response_sent) {
         response_sent = true;
         res.json(bot.observe());
     }
-    bot.removeListener("physicTick", onTick);
+    bot.removeListener("physicsTick", onTick);
 
     async function evaluateCode(code, programs) {
         // Echo the code produced for players to see it. Don't echo when the bot code is already producing dialog or it will double echo
@@ -270,7 +315,8 @@ app.post("/step", async (req, res) => {
             const posDifference = currentPos.distanceTo(oldestPos);
 
             if (posDifference < posThreshold) {
-                teleportBot(); // execute the function
+                if (bot.voyagerCheats) teleportBot();
+                else nudgeBot();
             }
 
             // Remove the oldest time from the list
@@ -280,49 +326,106 @@ app.post("/step", async (req, res) => {
 
     function teleportBot() {
         const blocks = bot.findBlocks({
-            matching: (block) => {
-                return block.type === 0;
-            },
+            matching: (block) => block.name === "air",
             maxDistance: 1,
             count: 27,
         });
 
-        if (blocks) {
+        if (blocks.length > 0) {
             // console.log(blocks.length);
             const randomIndex = Math.floor(Math.random() * blocks.length);
             const block = blocks[randomIndex];
-            bot.chat(`/tp @s ${block.x} ${block.y} ${block.z}`);
+            runCommand(bot, `/tp @s ${block.x} ${block.y} ${block.z}`);
         } else {
-            bot.chat("/tp @s ~ ~1.25 ~");
+            runCommand(bot, "/tp @s ~ ~1.25 ~");
         }
     }
 
+    // Get unstuck without commands: jump forward in a random direction.
+    async function nudgeBot() {
+        await bot.look(Math.random() * 2 * Math.PI, 0, true);
+        bot.setControlState("jump", true);
+        bot.setControlState("forward", true);
+        await bot.waitForTicks(10);
+        bot.setControlState("jump", false);
+        bot.setControlState("forward", false);
+    }
+
+    function findWorkstations() {
+        const ids = WORKSTATIONS.map((name) => mcData.blocksByName[name].id);
+        return new Set(
+            bot
+                .findBlocks({ matching: ids, maxDistance: 32, count: 256 })
+                .map((p) => p.toString())
+        );
+    }
+
+    // Normal-player version of returnItems: mine back the crafting tables and
+    // furnaces that appeared during this step (so the bot placed them) and
+    // collect the drops, so the bot keeps them like a player would. Blocks
+    // that were already there, such as other players', are left alone.
+    async function pickUpOwnWorkstations(before) {
+        const placed = [...findWorkstations()].filter((p) => !before.has(p));
+        for (const key of placed) {
+            const [x, y, z] = key.slice(1, -1).split(", ").map(Number);
+            const block = bot.blockAt(new Vec3(x, y, z));
+            if (!block || !WORKSTATIONS.includes(block.name)) continue;
+            let timer;
+            try {
+                await Promise.race([
+                    bot.collectBlock.collect(block, { ignoreNoPath: true }),
+                    new Promise((_, reject) => {
+                        timer = setTimeout(() => reject(new Error("timeout")), 30000);
+                    }),
+                ]);
+            } catch (err) {
+                bot.collectBlock.cancelTask?.();
+                bot.pathfinder.stop();
+                console.log(`Could not pick up ${block.name} at ${key}: ${err.message}`);
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+    }
+
+    // Respawn near where the bot is working instead of at world spawn. This
+    // replaces the Better Respawn mod that older versions of Voyager needed.
+    function setRespawnPoint() {
+        const entity = bot.entity;
+        if (!entity || bot.health <= 0 || !entity.onGround) return;
+        if (entity.isInLava || entity.isInWater) return;
+        const p = entity.position.floored();
+        runCommand(bot, `/spawnpoint @s ${p.x} ${p.y} ${p.z}`);
+    }
+
     function returnItems() {
-        bot.chat("/gamerule doTileDrops false");
+        setGameRule(bot, "doTileDrops", false);
         const crafting_table = bot.findBlock({
             matching: mcData.blocksByName.crafting_table.id,
             maxDistance: 128,
         });
         if (crafting_table) {
-            bot.chat(
+            runCommand(
+                bot,
                 `/setblock ${crafting_table.position.x} ${crafting_table.position.y} ${crafting_table.position.z} air destroy`
             );
-            bot.chat("/give @s crafting_table");
+            runCommand(bot, "/give @s crafting_table");
         }
         const furnace = bot.findBlock({
             matching: mcData.blocksByName.furnace.id,
             maxDistance: 128,
         });
         if (furnace) {
-            bot.chat(
+            runCommand(
+                bot,
                 `/setblock ${furnace.position.x} ${furnace.position.y} ${furnace.position.z} air destroy`
             );
-            bot.chat("/give @s furnace");
+            runCommand(bot, "/give @s furnace");
         }
         if (bot.inventoryUsed() >= 32) {
             // if chest is not in bot's inventory
             if (!bot.inventory.items().find((item) => item.name === "chest")) {
-                bot.chat("/give @s chest");
+                runCommand(bot, "/give @s chest");
             }
         }
         // if iron_pickaxe not in bot's inventory and bot.iron_pickaxe
@@ -330,9 +433,9 @@ app.post("/step", async (req, res) => {
             bot.iron_pickaxe &&
             !bot.inventory.items().find((item) => item.name === "iron_pickaxe")
         ) {
-            bot.chat("/give @s iron_pickaxe");
+            runCommand(bot, "/give @s iron_pickaxe");
         }
-        bot.chat("/gamerule doTileDrops true");
+        setGameRule(bot, "doTileDrops", true);
     }
 
     function handleError(err) {
@@ -399,22 +502,28 @@ app.post("/step", async (req, res) => {
 });
 
 app.post("/stop", (req, res) => {
-    bot.end();
+    if (bot) bot.end();
     res.json({
         message: "Bot stopped",
     });
 });
 
-app.post("/pause", (req, res) => {
+// Freeze or resume the server tick loop. Vanilla /tick (1.20.3+) replaces the
+// Multiplayer Server Pause mod that older versions of Voyager needed.
+function setTickFrozen(frozen, res) {
     if (!bot) {
         res.status(400).json({ error: "Bot not spawned" });
         return;
     }
-    bot.chat("/pause");
-    bot.waitForTicks(bot.waitTicks).then(() => {
-        res.json({ message: "Success" });
-    });
-});
+    // a normal player cannot freeze the world; the bot just waits
+    if (tickFrozen !== frozen && runCommand(bot, frozen ? "/tick freeze" : "/tick unfreeze")) {
+        tickFrozen = frozen;
+    }
+    res.json({ message: "Success", paused: tickFrozen });
+}
+
+app.post("/pause", (req, res) => setTickFrozen(true, res));
+app.post("/unpause", (req, res) => setTickFrozen(false, res));
 
 // Server listening to PORT 3000
 

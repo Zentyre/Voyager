@@ -127,3 +127,5 @@ debug_*
 logs/
 plot_iter.py
 *.svg
+# Minecraft dedicated server files and worlds
+minecraft_server/

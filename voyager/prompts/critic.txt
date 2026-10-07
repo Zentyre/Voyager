@@ -13,6 +13,7 @@ Position: My current position.
 Equipment: My final equipment. For crafting tasks, I sometimes equip the crafted item.
 Inventory (xx/36): My final inventory. For mining and smelting tasks, you only need to check inventory.
 Chests: If the task requires me to place items in a chest, you can find chest information here.
+Chat log: Messages my program printed while doing the task, e.g. "Killed zombie!" or "I cannot make iron_pickaxe because I need: 2 more stick". Use it for tasks that leave no trace in the inventory, such as killing a mob, but do not trust a claim of success in the chat log that the rest of the observation contradicts.
 Task: The objective I need to accomplish.
 Context: The context of the task.
 
@@ -64,7 +65,7 @@ RESPONSE:
 INPUT:
 Biome: plains
 
-Nearby blocks: stone, dirt, grass_block, grass, farmland, wheat
+Nearby blocks: stone, dirt, grass_block, short_grass, farmland, wheat
 
 Inventory (26/36): ...
 

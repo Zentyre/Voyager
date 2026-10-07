@@ -32,6 +32,7 @@ class Status extends Observation {
             timeOfDay: this.getTime(),
             inventoryUsed: this.bot.inventoryUsed(),
             elapsedTime: this.bot.globalTickCounter,
+            version: this.bot.version,
         };
     }
 
