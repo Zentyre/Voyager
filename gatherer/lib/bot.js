@@ -2,6 +2,7 @@
 // commands. Used on its own (single bot) or once per crew member, each in its
 // own worker thread (see crew.js).
 
+const path = require("path");
 const readline = require("readline");
 const mineflayer = require("mineflayer");
 const { pathfinder, Movements } = require("mineflayer-pathfinder");
@@ -26,15 +27,27 @@ const ARMOR_PIECES = ["helmet", "chestplate", "leggings", "boots"];
 const GEAR = /_(pickaxe|axe|shovel|hoe|sword|helmet|chestplate|leggings|boots)$|^(bow|shield|arrow|spectral_arrow|tipped_arrow|bucket|water_bucket)$/;
 
 function startBot(config, crew = null) {
+    const microsoft = config.auth === "microsoft";
     const bot = mineflayer.createBot({
         host: config.host,
         port: config.port,
+        // With Microsoft accounts this is just a label for the saved login;
+        // the in-game name comes from the account itself.
         username: config.username,
         auth: config.auth,
         version: config.version || undefined,
         viewDistance: config.viewDistance,
-        // Skip chat signing; it costs CPU and is not needed for a bot.
-        disableChatSigning: true,
+        // Online-mode servers usually require signed chat; offline ones don't,
+        // so skip the signing work there.
+        disableChatSigning: !microsoft,
+        // Saved logins live in gatherer/accounts/ (git-ignored, keep private).
+        profilesFolder: path.resolve(__dirname, "..", "accounts"),
+        onMsaCode: (data) => {
+            const text =
+                `Sign in the Minecraft account for bot "${config.username}": open ${data.verification_uri} ` +
+                `and enter code ${data.user_code} (expires in ${Math.round(data.expires_in / 60)} min).`;
+            console.log(`\n===== ${text} =====\n`);
+        },
     });
 
     bot.loadPlugin(pathfinder);
@@ -74,8 +87,8 @@ function startBot(config, crew = null) {
 
         ctx.home = bot.entity.position.clone();
         ctx.equipArmor().catch(() => {});
-        log(`Spawned at ${ctx.fmt(ctx.home)} on ${bot.version}.`);
-        if (crew) crew.online();
+        log(`Spawned at ${ctx.fmt(ctx.home)} on ${bot.version}${bot.username !== config.username ? ` as ${bot.username}` : ""}.`);
+        if (crew) crew.online(bot.username);
         if (ctx.queue.length > 0) runQueue();
         else if (!crew) log(`Nothing queued. Say '${config.commandPrefix}get <item> [count]' in chat.`);
     });
@@ -90,6 +103,9 @@ function startBot(config, crew = null) {
     bot.on("error", (err) => log(`Error: ${err.message}`));
     bot.on("end", (reason) => {
         log(`Disconnected (${reason}).`);
+        if (/session|authenticat|token/i.test(String(reason))) {
+            log("This looks like a login problem. Delete this bot's files in gatherer/accounts/ and sign in again.");
+        }
         ctx.learn?.save();
         if (crew) crew.offline(reason === "disconnect.quitting");
         process.exit(0); // in a worker thread this ends just this bot
@@ -410,7 +426,9 @@ function startBot(config, crew = null) {
     function route(text, fromPlayer) {
         const [first, ...rest] = text.trim().split(/\s+/);
         const word = (first || "").toLowerCase();
-        if (word === "all" || word === bot.username.toLowerCase()) return rest.join(" ");
+        if (word === "all" || word === bot.username.toLowerCase() || word === config.username.toLowerCase()) {
+            return rest.join(" ");
+        }
         if (!crew) return text;
         if (crew.members().has(word)) return null; // for another crew member
         // Unaddressed: the crew leader passes it to the coordinator, which
