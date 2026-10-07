@@ -59,6 +59,38 @@ const HUNTABLE_MOBS = new Set([
     "slime", "magma_cube",
 ]);
 
+// What each farm animal eats to breed.
+const BREED_FOOD = {
+    cow: ["wheat"],
+    mooshroom: ["wheat"],
+    sheep: ["wheat"],
+    goat: ["wheat"],
+    pig: ["carrot", "potato", "beetroot"],
+    chicken: ["wheat_seeds", "beetroot_seeds", "melon_seeds", "pumpkin_seeds"],
+    rabbit: ["carrot", "golden_carrot", "dandelion"],
+};
+
+// Brewing: each potion is made by adding `ingredient` to `base`.
+const POTIONS = {
+    awkward: { base: "water", ingredient: "nether_wart" },
+    healing: { base: "awkward", ingredient: "glistering_melon_slice" },
+    swiftness: { base: "awkward", ingredient: "sugar" },
+    strength: { base: "awkward", ingredient: "blaze_powder" },
+    night_vision: { base: "awkward", ingredient: "golden_carrot" },
+    fire_resistance: { base: "awkward", ingredient: "magma_cream" },
+    regeneration: { base: "awkward", ingredient: "ghast_tear" },
+    water_breathing: { base: "awkward", ingredient: "pufferfish" },
+    leaping: { base: "awkward", ingredient: "rabbit_foot" },
+    slow_falling: { base: "awkward", ingredient: "phantom_membrane" },
+    poison: { base: "awkward", ingredient: "spider_eye" },
+    turtle_master: { base: "awkward", ingredient: "turtle_helmet" },
+    weakness: { base: "water", ingredient: "fermented_spider_eye" },
+    invisibility: { base: "night_vision", ingredient: "fermented_spider_eye" },
+    harming: { base: "healing", ingredient: "fermented_spider_eye" },
+    slowness: { base: "swiftness", ingredient: "fermented_spider_eye" },
+};
+const POTION_MODIFIERS = { long: "redstone", strong: "glowstone_dust", splash: "gunpowder", lingering: "dragon_breath" };
+
 // Drops missing from minecraft-data's loot tables.
 const EXTRA_LOOT = {
     sheep: ["white_wool"], // most sheep are white
@@ -229,6 +261,9 @@ function createKnowledge(bot, config) {
         neverBreakIds,
         CROPS,
         HOES,
+        BREED_FOOD,
+        POTIONS,
+        POTION_MODIFIERS,
         fuelValue,
         isFood,
         foodPoints,

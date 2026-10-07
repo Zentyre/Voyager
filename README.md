@@ -37,7 +37,7 @@ solve novel tasks from scratch, while other techniques struggle to generalize.
 
 In this repo, we provide Voyager code. This codebase is under [MIT License](LICENSE).
 
-> **Just want a bot that gathers, crafts, smelts and farms resources, with no LLM and a small footprint?**
+> **Just want a bot that gathers, crafts, smelts, farms, breeds and brews, and learns from experience, with no LLM and a small footprint?**
 > See [`gatherer/`](gatherer/README.md).
 
 # Installation

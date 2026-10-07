@@ -1,11 +1,13 @@
-// Executes plans: mine, craft, smelt, hunt. `obtain` is the entry point; it
-// asks the planner for the cheapest method and recurses into the inputs.
+// Executes plans: mine, craft, smelt, farm, hunt. `obtain` is the entry point;
+// it asks the planner for the cheapest method and recurses into the inputs.
+// Every attempt is timed and scored so the planner learns what works.
 
 const { goals } = require("mineflayer-pathfinder");
 const { Vec3 } = require("vec3");
 
 function installActions(ctx) {
-    const { bot, config, kb, planner } = ctx;
+    const { bot, config, kb, planner, learn } = ctx;
+    const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
 
     // Make sure the inventory holds at least `target` of `name`.
     async function obtain(name, target, seen = new Set()) {
@@ -16,19 +18,30 @@ function installActions(ctx) {
         const plan = planner.plan(name, seen);
         const missing = target - ctx.countItem(name);
         ctx.log(`Need ${missing} more ${name}: ${plan.type}`);
-        switch (plan.type) {
-            case "mine":
-                return mine(name, target, plan.blocks, next);
-            case "craft":
-                return craft(name, target, plan, next);
-            case "smelt":
-                return smelt(name, target, plan.input, next);
-            case "hunt":
-                return hunt(name, target, plan.mobs, next);
-            case "farm":
-                return ctx.farmFor(name, target, plan.crop, next);
-            default:
-                throw new Error(`I don't know how to get ${name}`);
+        if (plan.type === "none") throw new Error(`I don't know how to get ${name}`);
+        const done = learn.begin(plan.type, name, missing);
+        try {
+            switch (plan.type) {
+                case "mine":
+                    await mine(name, target, plan.blocks, next);
+                    break;
+                case "craft":
+                    await craft(name, target, plan, next);
+                    break;
+                case "smelt":
+                    await smelt(name, target, plan.input, next);
+                    break;
+                case "hunt":
+                    await hunt(name, target, plan.mobs, next);
+                    break;
+                case "farm":
+                    await ctx.farmFor(name, target, plan.crop, next);
+                    break;
+            }
+            done(true);
+        } catch (err) {
+            done(err instanceof ctx.Stopped || err instanceof ctx.Retry ? null : false);
+            throw err;
         }
     }
 
@@ -37,6 +50,7 @@ function installActions(ctx) {
     async function mine(name, target, blocks, seen) {
         let exploreAttempts = 0;
         let failedDigs = 0;
+        let lastExplore = null;
         const skipped = new Set(); // blocks we could not reach or break
         while (ctx.countItem(name) < target) {
             ctx.checkStop();
@@ -58,18 +72,23 @@ function installActions(ctx) {
                     maxDistance: config.searchRadius,
                     count: 64,
                 })
-                .filter((p) => !skipped.has(p.toString()) && !isProtected(p));
+                .filter((p) => !skipped.has(p.toString()) && !isProtected(p) && !learn.isUnreachable(p));
+            if (lastExplore) {
+                learn.reward(lastExplore.context, lastExplore.arm, positions.length > 0 ? 1 : 0);
+                lastExplore = null;
+            }
             if (positions.length === 0) {
                 if (++exploreAttempts > config.maxExploreAttempts) {
                     throw new Error(`couldn't find any ${name} nearby`);
                 }
                 ctx.log(`No ${name} source in range, exploring (${exploreAttempts}/${config.maxExploreAttempts}).`);
-                await exploreAndReplan(seen);
+                lastExplore = await exploreAndReplan(seen, "block", harvestable.map((b) => b.name));
                 continue;
             }
             exploreAttempts = 0;
 
             const block = bot.blockAt(positions[0]);
+            learn.remember("block", block.name, block.position, positions.length);
             const before = ctx.interrupts;
             let failure = null;
             try {
@@ -85,6 +104,7 @@ function installActions(ctx) {
             }
             if (failure) {
                 skipped.add(block.position.toString());
+                if (failure === "unreachable") learn.markUnreachable(block.position);
                 ctx.log(`Skipping ${block.name} at ${ctx.fmt(block.position)}: ${failure}`);
                 if (++failedDigs > 10) throw new Error(`too many failures mining ${name}`);
             } else {
@@ -102,25 +122,64 @@ function installActions(ctx) {
 
     // After wandering somewhere new, a different material may now be closer
     // (birch instead of oak), so sub-steps hand control back to re-plan.
-    async function exploreAndReplan(seen) {
-        await explore();
+    async function exploreAndReplan(seen, kind, names) {
+        const choice = await explore(kind, names);
         const task = ctx.current;
-        if (!task) return;
+        if (!task) return choice;
         task.explores = (task.explores || 0) + 1;
         if (task.explores > config.maxExploreAttempts * 3) {
             throw new Error("explored too long without finding what I need");
         }
-        if (seen.size > 1) throw new ctx.Retry();
+        if (seen.size > 1) {
+            // Score the direction now, since re-planning skips the normal check.
+            if (choice) learn.reward(choice.context, choice.arm, sourcesInView(kind, names) ? 1 : 0);
+            throw new ctx.Retry();
+        }
+        return choice;
     }
 
-    async function explore() {
-        const angle = Math.random() * Math.PI * 2;
+    function sourcesInView(kind, names) {
+        if (kind === "mob") return Boolean(nearestEntity(names, config.searchRadius));
+        const ids = names.map((n) => bot.registry.blocksByName[n]?.id).filter((id) => id !== undefined);
+        return Boolean(bot.findBlock({ matching: ids, maxDistance: config.searchRadius }));
+    }
+
+    // Look for `names` (blocks or mobs). First go back to places we remember
+    // seeing them; otherwise pick a compass direction, learning which
+    // directions tend to pay off around here and avoiding places we got hurt.
+    // Returns the direction choice so the caller can score it.
+    async function explore(kind = "block", names = []) {
         const pos = bot.entity.position;
-        const x = Math.floor(pos.x + Math.cos(angle) * config.exploreDistance);
-        const z = Math.floor(pos.z + Math.sin(angle) * config.exploreDistance);
+        const remembered = learn
+            .recall(kind, names, pos)
+            .filter((spot) => spot.distance > config.searchRadius * 0.6);
+        if (remembered.length) {
+            const spot = remembered[0];
+            ctx.log(`Heading to where I saw ${spot.name} before (${spot.x} ${spot.z}).`);
+            await ctx.safely(() =>
+                ctx.withTimeout(bot.pathfinder.goto(new goals.GoalNear(spot.x, spot.y, spot.z, 6)), 120000)
+            );
+            if (!sourcesInView(kind, names)) learn.forget(kind, names, new Vec3(spot.x, spot.y, spot.z));
+            return null;
+        }
+
+        const region = `${Math.floor(pos.x / 256)},${Math.floor(pos.z / 256)}`;
+        const context = `explore:${kind}:${names.slice(0, 3).join("/")}@${region}`;
+        const target = (arm) => {
+            const angle = (COMPASS.indexOf(arm) * Math.PI) / 4;
+            return new Vec3(
+                Math.floor(pos.x + Math.sin(angle) * config.exploreDistance),
+                pos.y,
+                Math.floor(pos.z - Math.cos(angle) * config.exploreDistance)
+            );
+        };
+        const safe = COMPASS.filter((arm) => learn.dangerAt(target(arm)) < 3);
+        const arm = learn.choose(context, safe.length ? safe : COMPASS);
+        const dest = target(arm);
         await ctx.safely(() =>
-            ctx.withTimeout(bot.pathfinder.goto(new goals.GoalXZ(x, z)), 60000)
+            ctx.withTimeout(bot.pathfinder.goto(new goals.GoalXZ(dest.x, dest.z)), 60000)
         );
+        return { context, arm };
     }
 
     // ---------- crafting ----------
@@ -291,6 +350,7 @@ function installActions(ctx) {
 
     async function hunt(name, target, mobs, seen) {
         let exploreAttempts = 0;
+        let lastExplore = null;
         const gaveUpOn = new Set(); // mobs we couldn't catch
         while (ctx.countItem(name) < target) {
             ctx.checkStop();
@@ -299,19 +359,24 @@ function installActions(ctx) {
             await ctx.act(() => pickUpDrops(name));
             if (ctx.countItem(name) >= target) break;
 
-            const mob = nearestEntity(mobs, config.searchRadius, gaveUpOn);
+            const mob = nearestEntity(mobs, config.searchRadius, gaveUpOn, ctx.huntable);
+            if (lastExplore) {
+                learn.reward(lastExplore.context, lastExplore.arm, mob ? 1 : 0);
+                lastExplore = null;
+            }
             if (!mob) {
                 if (++exploreAttempts > config.maxExploreAttempts) {
-                    throw new Error(`couldn't find any ${mobs.join("/")} nearby`);
+                    throw new Error(`couldn't find any ${mobs.join("/")} nearby (I leave ${config.keepAnimals} of each kind to breed)`);
                 }
-                ctx.log(`No ${mobs.join("/")} in range, exploring (${exploreAttempts}/${config.maxExploreAttempts}).`);
-                await exploreAndReplan(seen);
+                ctx.log(`No ${mobs.join("/")} I can hunt in range, exploring (${exploreAttempts}/${config.maxExploreAttempts}).`);
+                lastExplore = await exploreAndReplan(seen, "mob", mobs);
                 continue;
             }
             exploreAttempts = 0;
+            learn.remember("mob", mob.name, mob.position);
             ctx.log(`Hunting ${mob.name} for ${name}.`);
             try {
-                await ctx.act(() => ctx.attack(mob));
+                await ctx.act(() => ctx.huntMob(mob));
             } catch (err) {
                 if (err instanceof ctx.Stopped || err instanceof ctx.Retry) throw err;
                 ctx.log(err.message);
@@ -322,10 +387,10 @@ function installActions(ctx) {
         }
     }
 
-    function nearestEntity(names, radius, exclude = new Set()) {
+    function nearestEntity(names, radius, exclude = new Set(), allowed = () => true) {
         const pos = bot.entity.position;
         return Object.values(bot.entities)
-            .filter((e) => names.includes(e.name) && !exclude.has(e.id))
+            .filter((e) => names.includes(e.name) && !exclude.has(e.id) && allowed(e))
             .filter((e) => e.position.distanceTo(pos) <= radius)
             .sort((a, b) => a.position.distanceTo(pos) - b.position.distanceTo(pos))[0];
     }
@@ -386,7 +451,7 @@ function installActions(ctx) {
         ctx.log("Deposited items in chest.");
     }
 
-    Object.assign(ctx, { obtain, depositAll, pickUpDrops, nearestEntity, explore });
+    Object.assign(ctx, { obtain, depositAll, pickUpDrops, nearestEntity, explore, placeNearby, ensureStation });
 }
 
 module.exports = { installActions };

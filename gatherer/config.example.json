@@ -24,10 +24,19 @@
     "eatBelow": 14,
     "findFoodBelow": 8,
     "autoArmor": true,
+    "useShield": true,
+    "keepAnimals": 2,
+    "autoSleep": true,
+    "bringBed": false,
 
     "farm": true,
     "farmSize": 9,
     "farmWaitMinutes": 30,
+    "placeWater": true,
+
+    "learn": true,
+    "memoryFile": "memory.json",
+    "memoryRange": 400,
 
     "returnHome": true,
     "quitWhenDone": false,

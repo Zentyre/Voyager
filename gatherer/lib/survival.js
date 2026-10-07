@@ -1,39 +1,24 @@
-// Staying alive: fight back against hostile mobs, run from creepers or when
-// low on health, and eat (hunting for food if there's none).
+// Staying alive between and during tasks: react to mobs, put out fire, eat
+// (finding food if there is none), and sleep through the night.
 
-const { goals } = require("mineflayer-pathfinder");
-
-const ARMOR_SLOTS = { helmet: "head", chestplate: "torso", leggings: "legs", boots: "feet" };
-const ARMOR_RANK = ["leather", "golden", "chainmail", "turtle", "iron", "diamond", "netherite"];
-
-function armorInfo(name) {
-    const match = /^([a-z]+)_(helmet|chestplate|leggings|boots)$/.exec(name || "");
-    if (!match) return null;
-    return { slot: ARMOR_SLOTS[match[2]], rank: ARMOR_RANK.indexOf(match[1]) };
-}
-
-const WEAPONS = [
-    "netherite_sword", "diamond_sword", "iron_sword", "stone_sword", "golden_sword", "wooden_sword",
-    "netherite_axe", "diamond_axe", "iron_axe", "stone_axe", "golden_axe", "wooden_axe",
-];
+const GOOD_IN_A_PINCH = ["enchanted_golden_apple", "golden_apple"];
 
 function installSurvival(ctx) {
-    const { bot, config, kb, planner } = ctx;
+    const { bot, config, kb, planner, learn } = ctx;
     let fighting = false;
     let seekingFood = false;
+    let sleeping = false; // in bed (or walking to it)
+    let bedtime = false; // anywhere inside sleep(), including fetching a bed
+    let sleepRetryAt = 0;
     const ignoreUntil = new Map(); // entity id -> timestamp
 
     function inDanger() {
         return ["survival", "adventure"].includes(bot.game?.gameMode);
     }
 
-    function isHostile(entity) {
-        return bot.registry.entitiesByName[entity.name]?.category === "Hostile mobs";
-    }
-
     function isThreat(entity) {
         if (!entity?.position || entity === bot.entity || entity === ctx.target) return false;
-        if (!isHostile(entity) || kb.DONT_PROVOKE.has(entity.name)) return false;
+        if (!ctx.isHostile(entity) || kb.DONT_PROVOKE.has(entity.name)) return false;
         if ((ignoreUntil.get(entity.id) || 0) > Date.now()) return false;
         const me = bot.entity.position;
         return (
@@ -42,110 +27,40 @@ function installSurvival(ctx) {
         );
     }
 
+    // Closest threat, with archers and creepers dealt with first.
     function nearestThreat() {
         const me = bot.entity.position;
+        const urgency = (e) =>
+            e.position.distanceTo(me) * (e.name === "creeper" ? 0.5 : /skeleton|stray|bogged/.test(e.name) ? 0.7 : 1);
         return Object.values(bot.entities)
             .filter(isThreat)
-            .sort((a, b) => a.position.distanceTo(me) - b.position.distanceTo(me))[0];
+            .sort((a, b) => urgency(a) - urgency(b))[0];
     }
 
     ctx.threatNearby = () =>
         config.defend !== false && Boolean(bot.entity) && inDanger() && Boolean(nearestThreat());
 
-    // Wear the best armor we carry, and a shield in the off-hand.
-    async function equipArmor() {
-        if (config.autoArmor === false) return;
-        for (const slot of Object.values(ARMOR_SLOTS)) {
-            const worn = armorInfo(bot.inventory.slots[bot.getEquipmentDestSlot(slot)]?.name);
-            const best = bot.inventory
-                .items()
-                .map((item) => ({ item, info: armorInfo(item.name) }))
-                .filter(({ info }) => info && info.slot === slot)
-                .sort((a, b) => b.info.rank - a.info.rank)[0];
-            if (best && (!worn || best.info.rank > worn.rank)) {
-                await bot
-                    .equip(best.item, slot)
-                    .then(() => ctx.log(`Put on ${best.item.name}.`))
-                    .catch((err) => ctx.log(`Couldn't wear ${best.item.name}: ${err.message}`));
-            }
+    // ---------- food ----------
+
+    function bestFood(desperate, healing = false) {
+        const items = bot.inventory.items();
+        if (healing) {
+            const gold = items.find((i) => GOOD_IN_A_PINCH.includes(i.name));
+            if (gold) return gold;
         }
-        const offHand = bot.inventory.slots[bot.getEquipmentDestSlot("off-hand")];
-        const shield = bot.inventory.items().find((i) => i.name === "shield");
-        if (!offHand && shield) await bot.equip(shield, "off-hand").catch(() => {});
-    }
-
-    async function equipWeapon() {
-        for (const name of WEAPONS) {
-            const item = bot.inventory.items().find((i) => i.name === name);
-            if (item) return bot.equip(item, "hand").catch(() => {});
-        }
-    }
-
-    // Attack `mob` until it dies. Used both for hunting and for self-defence.
-    async function attack(mob, timeoutMs = 30000, maxDistance = Infinity) {
-        const before = ctx.interrupts;
-        ctx.target = mob;
-        await equipWeapon();
-        bot.pvp.attack(mob);
-        const start = Date.now();
-        try {
-            while (mob.isValid && bot.entities[mob.id]) {
-                ctx.checkStop();
-                if (ctx.interrupts !== before) throw new Error("interrupted");
-                if (Date.now() - start > timeoutMs) throw new Error(`couldn't catch the ${mob.name}`);
-                if (mob.position.distanceTo(bot.entity.position) > maxDistance) return; // it left
-                if (isHostile(mob) && bot.health <= config.fleeHealth) {
-                    bot.pvp.stop();
-                    await flee(mob);
-                    throw new Error(`too hurt to keep fighting the ${mob.name}`);
-                }
-                await bot.waitForTicks(4);
-            }
-        } finally {
-            bot.pvp.stop();
-            ctx.target = null;
-        }
-    }
-
-    async function flee(mob, ms = 6000) {
-        ctx.log(`Running from ${mob.name}.`);
-        bot.pathfinder.setGoal(new goals.GoalInvert(new goals.GoalFollow(mob, 16)), true);
-        await ctx.wait(ms);
-        bot.pathfinder.setGoal(null);
-    }
-
-    async function fight(mob) {
-        fighting = true;
-        try {
-            if (kb.FLEE_FROM.has(mob.name) || bot.health <= config.fleeHealth) {
-                await flee(mob);
-            } else {
-                ctx.log(`Defending against ${mob.name}.`);
-                await attack(mob, 20000, config.defendRadius * 2);
-            }
-        } catch (err) {
-            if (err instanceof ctx.Stopped) throw err;
-            ctx.log(err.message);
-        } finally {
-            fighting = false;
-            // Don't keep chasing something we couldn't reach or had to run from.
-            if (mob.isValid) ignoreUntil.set(mob.id, Date.now() + 20000);
-        }
-    }
-
-    function bestFood(desperate) {
-        return bot.inventory
-            .items()
-            .filter((i) => kb.isFood(i.name) && (desperate || !kb.BAD_FOOD.has(i.name)))
+        return items
+            .filter((i) => kb.isFood(i.name) && !GOOD_IN_A_PINCH.includes(i.name))
+            .filter((i) => desperate || !kb.BAD_FOOD.has(i.name))
             .sort((a, b) => kb.foodPoints(b.name) - kb.foodPoints(a.name))[0];
     }
+    ctx.bestFood = bestFood;
 
     async function maybeEat() {
         if (!inDanger()) return;
         const hungry = bot.food <= config.eatBelow || (bot.health < 12 && bot.food < 20);
         if (!hungry) return;
         let food = bestFood(bot.food <= 6);
-        if (!food && bot.food <= config.findFoodBelow && config.hunt !== false) {
+        if (!food && bot.food <= config.findFoodBelow) {
             seekingFood = true;
             try {
                 const choice = planner.cheapestOf(kb.FOOD_SOURCES);
@@ -171,22 +86,127 @@ function installSurvival(ctx) {
         }
     }
 
-    // Called between actions: deal with nearby mobs, then hunger.
-    async function guard() {
-        if (fighting || !bot.entity) return;
-        await equipArmor();
-        for (let i = 0; i < 8 && ctx.threatNearby(); i++) {
-            await fight(nearestThreat());
-        }
-        if (!seekingFood) await maybeEat();
+    // ---------- sleep ----------
+
+    function isNight() {
+        const t = bot.time?.timeOfDay ?? 0;
+        return (t >= 12542 && t <= 23459) || bot.thunderState > 0;
     }
 
-    // Watch for mobs while busy, and look after ourselves while idle.
+    function inOverworld() {
+        return String(bot.game?.dimension || "overworld").includes("overworld");
+    }
+
+    function bedNames() {
+        return bot.registry.blocksArray.filter((b) => b.name.endsWith("_bed")).map((b) => b.name);
+    }
+
+    function findBed(radius) {
+        const ids = bedNames().map((n) => bot.registry.blocksByName[n].id);
+        const near = bot.findBlock({ matching: ids, maxDistance: Math.min(radius, 64) });
+        if (near) return near;
+        // A bed we remember from before (e.g. one we placed).
+        for (const spot of learn.recall("block", bedNames(), bot.entity.position, radius)) {
+            const block = bot.blockAt(new ctx.Vec3(spot.x, spot.y, spot.z));
+            if (block && block.name.endsWith("_bed")) return block;
+        }
+        return null;
+    }
+
+    // Sleep in a bed nearby. With `getBed`, make and place one if needed.
+    async function sleep(options = {}) {
+        if (bedtime || sleeping || bot.isSleeping) return true;
+        if (!inOverworld()) throw new Error("beds only work in the overworld");
+        if (!isNight()) throw new Error("it isn't night");
+        bedtime = true;
+        try {
+            return await goToBed(options);
+        } finally {
+            bedtime = false;
+        }
+    }
+
+    async function goToBed({ getBed = false }) {
+        let bed = findBed(config.stationRadius * 4);
+        if (!bed && getBed) {
+            let have = bot.inventory.items().find((i) => i.name.endsWith("_bed"));
+            if (!have) {
+                const bedItems = Object.keys(bot.registry.itemsByName).filter((n) => n.endsWith("_bed"));
+                const choice = planner.cheapestOf(bedItems);
+                if (!choice || choice.cost === Infinity) throw new Error("I can't make a bed");
+                ctx.say(`Getting a ${choice.name} to sleep in.`);
+                await ctx.obtain(choice.name, 1);
+                have = bot.inventory.items().find((i) => i.name.endsWith("_bed"));
+            }
+            bed = await ctx.act(() => ctx.placeNearby(have.name));
+            learn.remember("block", bed.name, bed.position);
+        }
+        if (!bed) throw new Error("no bed nearby");
+
+        sleeping = true;
+        try {
+            await ctx.act(() => ctx.goTo(bed.position, 2));
+            await bot.sleep(bed);
+            ctx.say("Sleeping.");
+            learn.remember("block", bed.name, bed.position);
+            await new Promise((resolve) => {
+                const done = () => {
+                    clearTimeout(timer);
+                    bot.removeListener("wake", done);
+                    resolve();
+                };
+                const timer = setTimeout(done, 120000);
+                bot.once("wake", done);
+            });
+            learn.count("nightsSlept");
+            return true;
+        } finally {
+            sleeping = false;
+        }
+    }
+
+    async function maybeSleep() {
+        if (bedtime || config.autoSleep === false || !isNight() || !inOverworld()) return;
+        if (Date.now() < sleepRetryAt) return;
+        if (!findBed(config.stationRadius * 4) && !config.bringBed) return;
+        try {
+            await sleep({ getBed: Boolean(config.bringBed) });
+        } catch (err) {
+            if (err instanceof ctx.Stopped) throw err;
+            ctx.log(`Couldn't sleep: ${err.message}`);
+            sleepRetryAt = Date.now() + 60000; // e.g. monsters nearby
+        }
+    }
+
+    // ---------- guard ----------
+
+    // Called between actions: armor, fire, mobs, hunger, bedtime.
+    async function guard() {
+        if (fighting || sleeping || !bot.entity) return;
+        await ctx.equipArmor();
+        await ctx.extinguish();
+        for (let i = 0; i < 8 && ctx.threatNearby(); i++) {
+            const mob = nearestThreat();
+            fighting = true;
+            try {
+                await ctx.fight(mob);
+            } finally {
+                fighting = false;
+                // Don't keep chasing something we couldn't reach or had to run from.
+                if (mob.isValid) ignoreUntil.set(mob.id, Date.now() + 20000);
+            }
+        }
+        if (!seekingFood) await maybeEat();
+        await maybeSleep();
+    }
+
+    // Watch for mobs and fire while busy; look after ourselves while idle.
     let ticks = 0;
     let idleGuard = false;
     bot.on("physicsTick", () => {
         ticks++;
-        if (ticks % 10 !== 0 || fighting) return;
+        if (ticks % 10 !== 0 || fighting || sleeping) return;
+        if (ctx.onFire()) ctx.extinguish().catch(() => {});
         if (ctx.busy) {
             if (ctx.threatNearby()) ctx.stopCurrentAction();
         } else if (!idleGuard && (ticks % 40 === 0 || ctx.threatNearby())) {
@@ -197,7 +217,14 @@ function installSurvival(ctx) {
         }
     });
 
-    Object.assign(ctx, { guard, attack, eat: maybeEat, equipArmor });
+    // Remember where we died, to stay away from there.
+    bot.on("death", () => {
+        ctx.deaths++;
+        learn.count("deaths");
+        if (bot.entity) learn.addDanger(bot.entity.position, 5);
+    });
+
+    Object.assign(ctx, { guard, eat: maybeEat, sleep, isNight });
 }
 
 module.exports = { installSurvival };

@@ -51,6 +51,7 @@ function installFarming(ctx) {
                     continue;
                 }
                 harvested++;
+                ctx.learn.count("harvested");
                 await ctx.wait(250); // let drops spawn
                 await ctx.pickUpDrops(null, 4);
                 await replant(block.position, crop);
@@ -118,8 +119,13 @@ function installFarming(ctx) {
         if (ctx.countItem(crop.seed) === 0) {
             await ctx.obtain(crop.seed, Math.min(count, 4), seen);
         }
-        const spots = farmSpots(count);
-        if (spots.length === 0) throw new Error("no water nearby to start a farm next to");
+        let spots = farmSpots(count);
+        if (spots.length === 0) {
+            if (config.placeWater === false) throw new Error("no water nearby to start a farm next to");
+            await ctx.makeWaterSource(seen);
+            spots = farmSpots(count);
+            if (spots.length === 0) throw new Error("no room for a farm around the water");
+        }
 
         let planted = 0;
         for (const pos of spots) {

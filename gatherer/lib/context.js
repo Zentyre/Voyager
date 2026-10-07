@@ -1,6 +1,7 @@
 // Shared state and small helpers used by every module.
 
 const { goals } = require("mineflayer-pathfinder");
+const { Vec3 } = require("vec3");
 
 class Stopped extends Error {
     constructor() {
@@ -21,6 +22,8 @@ function createContext(bot, config) {
         config,
         Stopped,
         Retry,
+        Vec3,
+        deaths: 0,
         stopRequested: false,
         interrupts: 0, // bumped whenever an action is cut short (e.g. by a mob)
         current: null,
@@ -83,7 +86,7 @@ function createContext(bot, config) {
         ctx.interrupts++;
         bot.pathfinder.setGoal(null);
         bot.collectBlock.cancelTask().catch(() => {});
-        if (bot.pvp) bot.pvp.stop();
+        bot.clearControlStates();
     };
 
     ctx.goTo = (pos, range = 1) =>

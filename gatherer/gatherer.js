@@ -1,6 +1,8 @@
 // Lightweight, LLM-free Minecraft bot built on the same Mineflayer stack
 // Voyager uses. Ask for items and it mines, crafts, smelts, farms, or hunts for
-// them, wearing armor, fighting off mobs and eating along the way.
+// them; it also breeds animals, brews potions, sleeps, handles water, wears
+// armor, fights, and eats. It learns from experience (statistics, not an LLM)
+// and remembers what it learned between runs.
 //
 //   node gatherer.js                          # uses config.json
 //   node gatherer.js oak_log:64 iron_pickaxe:1
@@ -13,7 +15,6 @@ const mineflayer = require("mineflayer");
 const { pathfinder, Movements } = require("mineflayer-pathfinder");
 const { plugin: toolPlugin } = require("mineflayer-tool");
 const { plugin: collectBlockPlugin } = require("mineflayer-collectblock");
-const { plugin: pvpPlugin } = require("mineflayer-pvp");
 
 const { createContext } = require("./lib/context");
 const { createKnowledge } = require("./lib/knowledge");
@@ -21,6 +22,11 @@ const { createPlanner } = require("./lib/planner");
 const { installActions } = require("./lib/actions");
 const { installSurvival } = require("./lib/survival");
 const { installFarming } = require("./lib/farming");
+const { installCombat } = require("./lib/combat");
+const { installAnimals } = require("./lib/animals");
+const { installWater } = require("./lib/water");
+const { installBrewing } = require("./lib/brewing");
+const { createLearning } = require("./lib/learning");
 
 const DEFAULTS = {
     host: "localhost",
@@ -45,9 +51,17 @@ const DEFAULTS = {
     eatBelow: 14,
     findFoodBelow: 8,
     autoArmor: true,
+    useShield: true,
     farm: true,
     farmSize: 9,
     farmWaitMinutes: 30,
+    placeWater: true,
+    keepAnimals: 2,
+    autoSleep: true,
+    bringBed: false,
+    learn: true,
+    memoryFile: "memory.json",
+    memoryRange: 400,
     returnHome: true,
     quitWhenDone: false,
     chatter: true,
@@ -100,7 +114,6 @@ const bot = mineflayer.createBot({
 bot.loadPlugin(pathfinder);
 bot.loadPlugin(toolPlugin);
 bot.loadPlugin(collectBlockPlugin);
-bot.loadPlugin(pvpPlugin);
 
 const ctx = createContext(bot, config);
 ctx.queue.push(...config.tasks);
@@ -108,10 +121,15 @@ const { log, say } = ctx;
 
 bot.once("spawn", () => {
     ctx.kb = createKnowledge(bot, config);
+    ctx.learn = createLearning(ctx);
     ctx.planner = createPlanner(ctx);
     installActions(ctx);
+    installCombat(ctx);
     installSurvival(ctx);
     installFarming(ctx);
+    installAnimals(ctx);
+    installWater(ctx);
+    installBrewing(ctx);
 
     // Keep path computation cheap: short per-tick budget and a hard timeout.
     const movements = new Movements(bot);
@@ -137,10 +155,17 @@ bot.on("death", () => {
     ctx.stopCurrentAction();
 });
 
+bot.on("wake", () => log("Woke up."));
+
 bot.on("kicked", (reason) => log(`Kicked: ${typeof reason === "string" ? reason : JSON.stringify(reason)}`));
 bot.on("error", (err) => log(`Error: ${err.message}`));
 bot.on("end", (reason) => {
     log(`Disconnected (${reason}).`);
+    ctx.learn?.save();
+    process.exit(0);
+});
+process.on("SIGINT", () => {
+    ctx.learn?.save();
     process.exit(0);
 });
 
@@ -229,8 +254,9 @@ const ARMOR_PIECES = ["helmet", "chestplate", "leggings", "boots"];
 // ---------- commands (chat or terminal, plain text, no LLM) ----------
 
 const HELP = "Commands: " + [
-    "get <item> [count]", "plan <item>", "farm", "plant <crop> [plots]", "armor [material]",
-    "stop", "status", "queue", "inv", "eat", "come", "deposit", "home", "quit",
+    "get <item> [count]", "plan <item>", "farm", "plant <crop> [plots]", "breed <animal> [pairs]",
+    "brew <potion> [count] [long|strong|splash]", "sleep", "water", "bucket", "armor [material]",
+    "learned", "forget", "stop", "status", "queue", "inv", "eat", "come", "deposit", "home", "quit",
 ]
     .map((c) => config.commandPrefix + c)
     .join(" | ");
@@ -277,6 +303,50 @@ async function handleCommand(text, fromPlayer) {
             await runExclusive("plant", () => ctx.plantCrop(crop, plots));
             break;
         }
+        case "breed": {
+            const animal = args[0];
+            if (!animal || !ctx.kb.BREED_FOOD[animal]) {
+                return say(`Usage: ${config.commandPrefix}breed <${Object.keys(ctx.kb.BREED_FOOD).join("|")}> [pairs]`);
+            }
+            const pairs = parseInt(args[1] || "1", 10);
+            await runExclusive("breed", () => ctx.breed(animal, pairs));
+            break;
+        }
+        case "brew": {
+            const potion = args[0];
+            if (!potion || !ctx.kb.POTIONS[potion]) {
+                return say(`Usage: ${config.commandPrefix}brew <potion> [count] [long|strong|splash]. Potions: ${ctx.potionNames().join(", ")}`);
+            }
+            const count = parseInt(args[1] || "3", 10);
+            await runExclusive("brew", () => ctx.brew(potion, count, args[2] || null));
+            break;
+        }
+        case "sleep":
+            await runExclusive("sleep", () => ctx.sleep({ getBed: true }));
+            break;
+        case "water":
+            await runExclusive("place water", async () => {
+                const pos = await ctx.placeWaterHere();
+                say(`Placed water at ${ctx.fmt(pos)}.`);
+            });
+            break;
+        case "bucket":
+            await runExclusive("fill a bucket", async () => {
+                await ctx.getWaterBucket();
+                say("Got a water bucket.");
+            });
+            break;
+        case "learned":
+        case "memory": {
+            const lines = ctx.learn.summary();
+            lines.forEach((line) => log(line));
+            if (fromPlayer) lines.slice(0, 4).forEach((line) => bot.chat(line.slice(0, 250)));
+            break;
+        }
+        case "forget":
+            ctx.learn.reset();
+            say("Forgot everything I learned on this server.");
+            break;
         case "armor": {
             const material = args[0];
             if (!material) {
@@ -298,6 +368,7 @@ async function handleCommand(text, fromPlayer) {
             ctx.queue.length = 0;
             if (ctx.busy) ctx.stopRequested = true;
             ctx.stopCurrentAction();
+            if (bot.isSleeping) bot.wake().catch(() => {});
             say("Stopped and cleared the queue.");
             break;
         case "status":
