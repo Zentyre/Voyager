@@ -243,30 +243,77 @@ function patchBot(bot) {
 
     // If the server seems to go quiet, these say whether packets stopped
     // arriving or arrived but couldn't be read, and whether the bot froze.
+    const clock = (t) => new Date(t).toISOString().slice(11, 19);
     const received = []; // recent packets from the server
+    const silences = []; // gaps of over 2 s between packets: [when it ended, seconds]
+    const perSecond = new Map(); // second -> packets read
     let lastPacketAt = Date.now();
+    let lastKeepAliveAt = null;
     let bytesAtLastPacket = 0;
     const notePacket = (name) => {
-        lastPacketAt = Date.now();
+        const now = Date.now();
+        if (now - lastPacketAt > 2000) {
+            silences.push([now, (now - lastPacketAt) / 1000]);
+            if (silences.length > 5) silences.shift();
+        }
+        lastPacketAt = now;
+        if (name === "keep_alive") lastKeepAliveAt = now;
         bytesAtLastPacket = client.socket?.bytesRead ?? 0;
-        received.push(`${new Date(lastPacketAt).toISOString().slice(11, 23)} ${name}`);
+        const second = Math.floor(now / 1000);
+        perSecond.set(second, (perSecond.get(second) || 0) + 1);
+        if (perSecond.size > 90) perSecond.delete(perSecond.keys().next().value);
+        received.push(`${new Date(now).toISOString().slice(11, 23)} ${name}`);
         if (received.length > 15) received.shift();
     };
-    client.on("error", (err) => {
-        if (!/timed out/.test(err.message)) return;
-        const quiet = ((Date.now() - lastPacketAt) / 1000).toFixed(1);
+    const diagnose = () => {
+        const now = Date.now();
+        const quiet = ((now - lastPacketAt) / 1000).toFixed(1);
         const unread = (client.socket?.bytesRead ?? 0) - bytesAtLastPacket;
+        let recent = 0;
+        for (const [second, count] of perSecond) if (second * 1000 > now - 30000) recent += count;
+        const gaps = silences.filter(([at]) => at > now - 60000);
+        const longest = Math.max(0, ...gaps.map(([, secs]) => secs));
+        const verdict =
+            longest >= 15 || now - lastPacketAt >= 15000
+                ? "The server sent nothing for a long stretch: the server (or the network) stalled. " +
+                  "Check the server console around this time for \"Can't keep up!\" messages."
+                : "The server kept sending game data but no keep-alives.";
         console.log(
-            `[${bot.username}] Connection diagnostics: the last packet the bot read came ${quiet} s ago; ` +
-                `${unread} bytes arrived after it ${unread > 0 ? "that the bot could not read" : "(the server sent nothing)"}. ` +
-                `Last packets read:\n  ${received.join("\n  ")}`
+            `[${bot.username}] Connection diagnostics: ${verdict}\n` +
+                `  Last keep-alive from the server: ${lastKeepAliveAt ? `${((now - lastKeepAliveAt) / 1000).toFixed(1)} s ago` : "none"}.\n` +
+                `  Packets read in the last 30 s: ${recent}. Last packet: ${quiet} s ago, ` +
+                `${unread} bytes arrived after it${unread > 0 ? " that the bot could not read" : ""}.\n` +
+                `  Silences over 2 s in the last minute: ${gaps.length ? gaps.map(([at, secs]) => `${secs.toFixed(1)} s ending ${clock(at)}`).join(", ") : "none"}.\n` +
+                `  Last packets read:\n    ${received.join("\n    ")}`
         );
+    };
+    client.on("error", (err) => {
+        if (/timed out/.test(err.message)) diagnose();
     });
     let lastBeat = Date.now();
+    // minecraft-protocol hangs up after 30 s without a keep-alive (the bot
+    // passes a longer limit, see bot.js). Some servers go quiet on keep-alives
+    // while still sending game data, and would kick the bot themselves (with a
+    // reason) if they really wanted a reply. So only hang up when the server
+    // sends nothing at all for a minute.
+    let quietNotice = false;
     const heartbeat = setInterval(() => {
-        const gap = Date.now() - lastBeat;
+        const now = Date.now();
+        const gap = now - lastBeat;
         if (gap > 5000) console.log(`[${bot.username}] The bot froze for ${(gap / 1000).toFixed(1)} s (busy computing).`);
-        lastBeat = Date.now();
+        lastBeat = now;
+        if (client.state !== "play" || lastKeepAliveAt === null) return;
+        if (now - lastKeepAliveAt > 45000 && now - lastPacketAt < 5000 && !quietNotice) {
+            quietNotice = true;
+            console.log(`[${bot.username}] The server hasn't sent a keep-alive for 45 s but is still sending game data; staying connected.`);
+        } else if (now - lastKeepAliveAt < 45000) {
+            quietNotice = false;
+        }
+        if (now - lastPacketAt > 60000) {
+            console.log(`[${bot.username}] Nothing from the server for 60 s; disconnecting.`);
+            diagnose();
+            client.end("timeout");
+        }
     }, 1000);
     heartbeat.unref?.();
     client.once("end", () => clearInterval(heartbeat));

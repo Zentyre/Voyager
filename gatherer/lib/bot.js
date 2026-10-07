@@ -87,6 +87,9 @@ function createBot(config, crew) {
         auth: config.auth,
         version: config.version || undefined,
         viewDistance: config.viewDistance,
+        // Hang up after this long without a keep-alive. compat.js disconnects
+        // sooner if the server sends nothing at all for a minute.
+        checkTimeoutInterval: 10 * 60 * 1000,
         // Online-mode servers usually require signed chat; offline ones don't,
         // so skip the signing work there.
         disableChatSigning: !microsoft,
@@ -402,8 +405,10 @@ function createBot(config, crew) {
             case "guard":
             case "bodyguard":
             case "protect": {
-                const name = args[0] || fromPlayer;
-                if (!name) return say(`Usage: ${config.commandPrefix}guard <player>`);
+                // Player names are case-sensitive in the game; match them however they were typed.
+                const typed = (args[0] || fromPlayer || "").replace(/[^A-Za-z0-9_]/g, "");
+                if (!typed) return say(`Usage: ${config.commandPrefix}guard <player>`);
+                const name = Object.keys(bot.players).find((n) => n.toLowerCase() === typed.toLowerCase()) || typed;
                 if (name === bot.username) return say("I can't guard myself.");
                 await runExclusive("guard", () => ctx.bodyguard(name));
                 break;

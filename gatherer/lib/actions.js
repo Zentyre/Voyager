@@ -76,8 +76,12 @@ function installActions(ctx) {
                 .filter((p) => !ctx.crew?.claimedByOther(`block:${p}`));
             // Prefer blocks near our own height: the top of a tree whose trunk
             // is gone looks close but can't be reached without building up.
+            // Logs grow on the surface, so one far below is in a ravine or cave
+            // and means digging down to it.
             const me = bot.entity.position;
-            const effort = (p) => p.distanceTo(me) + 3 * Math.max(0, p.y - me.y - 2);
+            const surface = /_(log|stem)$/.test(name);
+            const effort = (p) =>
+                p.distanceTo(me) + 3 * Math.max(0, p.y - me.y - 2) + (surface ? 3 * Math.max(0, me.y - p.y - 4) : 0);
             positions.sort((a, b) => effort(a) - effort(b));
             if (lastExplore) {
                 learn.reward(lastExplore.context, lastExplore.arm, positions.length > 0 ? 1 : 0);
