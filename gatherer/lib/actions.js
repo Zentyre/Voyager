@@ -169,20 +169,29 @@ function installActions(ctx) {
         if (bot.game?.gameMode === "adventure") {
             throw new Error(`I'm in adventure mode, which can't break blocks. Put me in survival: /gamemode survival ${bot.username}`);
         }
+        let refusals = 0;
         for (let attempt = 0; attempt < 3; attempt++) {
             ctx.checkStop();
             const verdict = serverVerdict(pos);
+            let ms;
             try {
-                await ctx.withTimeout(bot.dig(block), block.digTime(bot.heldItem?.type ?? null) * 2 + 5000);
+                ms = await swingAt(block);
             } catch (err) {
                 verdict.cancel();
-                bot.stopDigging();
                 throw err;
             }
-            const result = await verdict.after(4000);
-            if (result === "broken") return;
-            if (bot.blockAt(pos)?.type !== block.type) bot.world.setBlockStateId(pos, block.stateId);
-            if (nearSpawn(pos)) {
+            // If the server saw us as slower (in the air, say), it finishes the
+            // break itself a little later, so give it time.
+            const result = await verdict.after(Math.max(4000, ms * 5));
+            stopSwinging();
+            if (result === "broken") {
+                bot.world.setBlockStateId(pos, 0);
+                return;
+            }
+            // Spawn protection refuses every time, so only conclude that after the
+            // server has put this block back twice.
+            if (result === "kept") refusals++;
+            if (refusals >= 2 && nearSpawn(pos)) {
                 if (!spawnProtected) {
                     spawnProtected = true;
                     const sp = bot.spawnPoint;
@@ -206,6 +215,42 @@ function installActions(ctx) {
             if (!block || block.type === 0) return;
         }
         throw new Error(`the server wouldn't let me break the ${block.name}`);
+    }
+
+    // Dig like a client: face the block, start, keep swinging, and say we're
+    // done once it should be broken if we're standing on the ground (the server
+    // keeps going by itself if it saw us as slower). mineflayer's bot.dig decides
+    // the time once, at the start: a bot still settling from a step or a jump
+    // waited five times too long, so the dig timed out before it said "done".
+    // Returns the dig time used; the swinging goes on until stopSwinging().
+    let swinging = null;
+    async function swingAt(block) {
+        const pos = block.position;
+        const eye = bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0);
+        const d = eye.minus(pos.offset(0.5, 0.5, 0.5));
+        const ax = Math.abs(d.x), ay = Math.abs(d.y), az = Math.abs(d.z);
+        // faces: 0 down, 1 up, 2 north (-z), 3 south (+z), 4 west (-x), 5 east (+x)
+        const face = ay >= ax && ay >= az ? (d.y > 0 ? 1 : 0) : ax >= az ? (d.x > 0 ? 5 : 4) : d.z > 0 ? 3 : 2;
+        const offset = [[0, -0.5, 0], [0, 0.5, 0], [0, 0, -0.5], [0, 0, 0.5], [-0.5, 0, 0], [0.5, 0, 0]][face];
+        await bot.lookAt(pos.offset(0.5 + offset[0], 0.5 + offset[1], 0.5 + offset[2]), true);
+        const held = bot.heldItem;
+        const helmet = bot.inventory.slots[bot.getEquipmentDestSlot("head")];
+        const enchants = [...(held?.enchants || []), ...(helmet?.enchants || [])];
+        const inWater = ["water", "flowing_water"].includes(bot._getBlockAtEyeLevel?.()?.name);
+        const ms = block.digTime(held?.type ?? null, bot.game.gameMode === "creative", inWater, false, enchants, bot.entity.effects);
+        if (!Number.isFinite(ms)) throw new Error(`can't break the ${block.name}`);
+        stopSwinging();
+        bot._client.write("block_dig", { status: 0, location: pos, face });
+        bot.swingArm();
+        swinging = setInterval(() => bot.swingArm(), 250);
+        await ctx.wait(ms + 50);
+        bot._client.write("block_dig", { status: 2, location: pos, face }); // finished
+        return ms;
+    }
+
+    function stopSwinging() {
+        if (swinging) clearInterval(swinging);
+        swinging = null;
     }
 
     // Vanilla spawn protection covers 16 blocks around the world spawn (a square).
