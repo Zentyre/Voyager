@@ -22,6 +22,7 @@ const { installBrewing } = require("./brewing");
 const { createLearning } = require("./learning");
 const { installArchery } = require("./archery");
 const { installBodyguard } = require("./bodyguard");
+const { patchBot } = require("./compat");
 
 const ARMOR_PIECES = ["helmet", "chestplate", "leggings", "boots"];
 const GEAR = /_(pickaxe|axe|shovel|hoe|sword|helmet|chestplate|leggings|boots)$|^(bow|shield|arrow|spectral_arrow|tipped_arrow|bucket|water_bucket)$/;
@@ -81,6 +82,7 @@ function createBot(config, crew) {
         },
     });
 
+    patchBot(bot); // packet changes in Minecraft 26.2/26.3
     bot.loadPlugin(pathfinder);
     bot.loadPlugin(toolPlugin);
     bot.loadPlugin(collectBlockPlugin);

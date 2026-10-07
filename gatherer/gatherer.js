@@ -11,6 +11,9 @@
 //   node gatherer.js oak_log:64 iron_pickaxe:1
 //   node gatherer.js --config other.json coal:16
 
+// Teach the Minecraft libraries about versions newer than they ship (26.3).
+require("./lib/compat").registerExtraVersions();
+
 const { loadConfig, botConfigs } = require("./lib/config");
 
 const config = loadConfig(process.argv.slice(2));

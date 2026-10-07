@@ -83,13 +83,11 @@ through Microsoft's page.
 - With `online-mode=true`, names are verified, so only the real Zentyre can
   command the bots.
 
-**Newer Minecraft than the bot supports?** The Minecraft libraries the bot uses
-support versions up to 26.1 (as of October 2026). If your server is newer (e.g.
-26.3), the bot connects as 26.1 and says so. Install the
-[ViaVersion](https://modrinth.com/plugin/viaversion) and
-[ViaBackwards](https://modrinth.com/plugin/viabackwards) plugins on the server
-(Paper/Spigot/Purpur/Fabric) so older clients can join. Later, run `npm update`
-when the libraries add newer versions.
+**Minecraft 26.3:** the libraries the bot uses only go up to 26.1, so the bot
+ships its own 26.3 support (`compat/`). It connects to 26.3 servers directly, with
+no ViaVersion needed. See [compat/README.md](compat/README.md) for how it was built
+and tested. For anything newer than 26.3, the bot connects as the newest version
+it knows and tells you; ViaVersion + ViaBackwards on the server can bridge the gap.
 
 On a LAN world or an `online-mode=false` server, leave `"auth": "offline"` and
 any names work with no accounts. Anyone can then join as any name, including
@@ -330,6 +328,8 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `lib/bot.js`        | One bot: connection, task queue, commands                 |
 | `lib/crew.js`       | Crew coordinator (main thread) and its link to each bot   |
 | `lib/crew-worker.js`| Worker-thread entry point for a crew member               |
+| `lib/compat.js`     | Minecraft 26.3 support: registers `compat/26.3` data, adapts packets |
+| `compat/`           | Generated 26.3 data and the script that builds it         |
 | `lib/knowledge.js`  | Lookup tables: drops, recipes, smelting, crops, breeding food, potions, fuel, food, mobs |
 | `lib/planner.js`    | Cost-based choice between mine / craft / smelt / farm / hunt |
 | `lib/learning.js`   | Experience statistics, place memory, bandits, danger map, saving |
