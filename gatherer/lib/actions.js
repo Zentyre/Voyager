@@ -3,6 +3,9 @@
 // Every attempt is timed and scored so the planner learns what works.
 
 const { goals } = require("mineflayer-pathfinder");
+// Blocks that do something when clicked (chests, doors, crafting tables...):
+// placing against them needs sneaking, so better not to pick them at all.
+const INTERACTABLE = new Set(require("mineflayer-pathfinder/lib/interactable.json"));
 const { Vec3 } = require("vec3");
 
 function installActions(ctx) {
@@ -618,7 +621,7 @@ function installActions(ctx) {
         const feet = bot.entity.position.floored();
         const spots = bot
             .findBlocks({
-                matching: (b) => b.boundingBox === "block",
+                matching: (b) => b.boundingBox === "block" && !INTERACTABLE.has(b.name) && b.name !== "modded_block",
                 maxDistance: 3,
                 count: 40,
             })
@@ -629,14 +632,27 @@ function installActions(ctx) {
             })
             .sort((a, b) => a.distanceTo(feet) - b.distanceTo(feet));
         for (const pos of spots.slice(0, 6)) {
+            const dest = pos.offset(0, 1, 0);
+            let problem = null;
             try {
-                await bot.equip(item, "hand");
+                const held = bot.inventory.items().find((i) => i.name === name);
+                if (!held) break; // it went down somewhere already
+                await bot.equip(held, "hand");
+                // Sneak, like a player does, so clicking never opens something instead.
+                bot.setControlState("sneak", true);
                 await bot.placeBlock(bot.blockAt(pos), new Vec3(0, 1, 0));
-                const placed = bot.blockAt(pos.offset(0, 1, 0));
-                if (placed?.name === name) return placed;
             } catch (err) {
-                ctx.log(`Couldn't place ${name} at ${ctx.fmt(pos)}: ${err.message}`);
+                problem = err.message;
+            } finally {
+                bot.setControlState("sneak", false);
+                if (bot.currentWindow) bot.closeWindow(bot.currentWindow); // opened by mistake
             }
+            // The server may have placed it even if the reply looked wrong; look again.
+            await ctx.wait(400);
+            const placed = bot.blockAt(dest);
+            if (placed?.name === name) return placed;
+            if (placed?.name === "modded_block" && bot.teachModdedBlock?.(dest, name)) return bot.blockAt(dest);
+            ctx.log(`Couldn't place ${name} at ${ctx.fmt(dest)}: ${problem || `got ${placed?.name || "nothing"}`}`);
         }
         throw new Error(`no room to place a ${name}`);
     }

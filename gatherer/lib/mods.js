@@ -92,6 +92,21 @@ function installModSupport(bot, log) {
     const shapes = registry.blockCollisionShapes;
     if (shapes?.blocks) shapes.blocks.modded_block = shapes.blocks.stone;
 
+    // A mod can replace a vanilla block with its own (a crafting table from
+    // Visual Workbench, say). Once the bot sees what one is (it placed a
+    // crafting table and got this block, or clicking it opened a crafting
+    // screen), that block state counts as the vanilla block from then on.
+    const taught = new Set();
+    bot.teachModdedBlock = (pos, name) => {
+        const vanilla = registry.blocksByName[name];
+        const stateId = bot.world.getBlockStateId(pos);
+        if (!vanilla || !(stateId > vanillaMaxState) || taught.has(stateId)) return false;
+        taught.add(stateId);
+        registry.blocksByStateId[stateId] = { ...vanilla, minStateId: stateId, maxStateId: stateId, defaultState: stateId };
+        log(`This server's ${name.replace(/_/g, " ")} is a block from a mod; I'll recognise it from now on.`);
+        return true;
+    };
+
     let unknownStates = 0;
     const learnState = (stateId) => {
         if (stateId <= vanillaMaxState || registry.blocksByStateId[stateId]) return;
@@ -102,8 +117,9 @@ function installModSupport(bot, log) {
     };
 
     const client = bot._client;
-    client.on("map_chunk", (packet) => {
-        const column = bot.world.getColumn(packet.x, packet.z);
+    // After mineflayer has stored the chunk (a raw map_chunk listener can run first).
+    bot.on("chunkColumnLoad", (corner) => {
+        const column = bot.world.getColumn(Math.floor(corner.x / 16), Math.floor(corner.z / 16));
         for (const section of column?.sections || []) {
             if (!section) continue;
             if (section.palette) {
@@ -150,8 +166,20 @@ function installModSupport(bot, log) {
         if (name === "block_place" && params?.location) lastUsed = { pos: params.location, at: Date.now() };
         return write(name, params);
     };
+    const STATION_BLOCK = { "minecraft:crafting": "crafting_table", "minecraft:anvil": "anvil", "minecraft:enchantment": "enchanting_table",
+        "minecraft:grindstone": "grindstone", "minecraft:smithing": "smithing_table", "minecraft:stonecutter": "stonecutter",
+        "minecraft:loom": "loom", "minecraft:cartography": "cartography_table", "minecraft:brewing_stand": "brewing_stand",
+        "minecraft:furnace": "furnace", "minecraft:blast_furnace": "blast_furnace", "minecraft:smoker": "smoker" };
     client.prependListener("open_window", (packet) => {
-        if (vanillaScreens.size === 0 || knownIds.has(packet.inventoryType)) return;
+        // Clicked a modded block and got a station's screen: that block is the station.
+        const recent = lastUsed && Date.now() - lastUsed.at < 5000;
+        const clicked = recent ? new Vec3(lastUsed.pos.x, lastUsed.pos.y, lastUsed.pos.z) : null;
+        const clickedModded = clicked && bot.blockAt(clicked)?.name === "modded_block";
+        if (vanillaScreens.size === 0 || knownIds.has(packet.inventoryType)) {
+            const key = [...vanillaScreens].find(([, id]) => id === packet.inventoryType)?.[0];
+            if (clickedModded && STATION_BLOCK[key]) bot.teachModdedBlock(clicked, STATION_BLOCK[key]);
+            return;
+        }
         let key = moddedScreens.get(packet.inventoryType);
         if (!key) {
             key = SCREEN_BY_TITLE[titleKey(packet.windowTitle)];
@@ -163,6 +191,7 @@ function installModSupport(bot, log) {
             moddedScreens.set(packet.inventoryType, key);
             log(`This server's ${key.replace("minecraft:", "").replace("_", " ")} screen comes from a mod; using it like the normal one.`);
         }
+        if (clickedModded && STATION_BLOCK[key]) bot.teachModdedBlock(clicked, STATION_BLOCK[key]);
         packet.inventoryType = vanillaScreens.get(key);
     });
 
