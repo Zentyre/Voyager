@@ -5,4 +5,9 @@ require("./compat").registerExtraVersions();
 const { startBot } = require("./bot");
 const { createCrewClient } = require("./crew");
 
-startBot(workerData.config, createCrewClient(parentPort, workerData));
+// Status and log lines go to the coordinator's dashboard.
+const reporter = {
+    status: (status) => parentPort.postMessage({ type: "status", status }),
+    log: (line) => parentPort.postMessage({ type: "log", line }),
+};
+startBot(workerData.config, createCrewClient(parentPort, workerData), reporter);

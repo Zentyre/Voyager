@@ -45,7 +45,11 @@ function startCrew(configs) {
     // Every name a crew member answers to (in-game names and config labels).
     const allNames = () => members.flatMap((m) => [m.name, m.label]);
     const microsoft = members.some((m) => m.config.auth === "microsoft");
-    const log = (text) => console.log(`[crew] ${text}`);
+    let hub = null;
+    const log = (text) => {
+        console.log(`[crew] ${text}`);
+        hub?.log("crew", text);
+    };
     let shuttingDown = false;
 
     function post(member, msg) {
@@ -148,6 +152,12 @@ function startCrew(configs) {
                 case "claim":
                     others(member, msg);
                     break;
+                case "status":
+                    hub?.status(msg.status);
+                    break;
+                case "log":
+                    hub?.log(member.label, msg.line);
+                    break;
             }
         });
         worker.on("error", (err) => log(`${member.name} crashed: ${err.stack || err.message}`));
@@ -168,6 +178,17 @@ function startCrew(configs) {
         });
     }
 
+    const settings = configs[0].dashboard;
+    if (settings !== false) {
+        hub = require("./dashboard").startDashboard(settings, {
+            names: members.map((m) => m.label),
+            onCommand: (target, text) => {
+                if (target === "auto") return consoleCommand(text);
+                consoleCommand(`${target} ${text.replace(/^[!.]/, "")}`);
+            },
+        });
+    }
+
     // Bring bots in one after another: each starts once the previous one is
     // online (or gave up), at least 3 s apart. With Microsoft accounts this
     // also means sign-in codes appear one at a time.
@@ -183,9 +204,9 @@ function startCrew(configs) {
     log(`Starting ${members.length} bots: ${members.map((m) => m.label).join(", ")}.`);
     if (microsoft) log("Microsoft accounts: each bot that hasn't signed in before will show a code to enter, one at a time.");
 
-    // Terminal: "<botname> cmd", "all cmd", "crew", or a crew command.
-    readline.createInterface({ input: process.stdin }).on("line", (line) => {
-        const text = line.trim().replace(/^!/, "");
+    // Terminal and dashboard: "<botname> cmd", "all cmd", "crew", or a crew command.
+    function consoleCommand(line) {
+        const text = line.trim().replace(/^[!.]/, "");
         if (!text) return;
         const [first, ...rest] = text.split(/\s+/);
         const target = byName(first);
@@ -195,7 +216,8 @@ function startCrew(configs) {
             return;
         }
         dispatch(text, null);
-    });
+    }
+    readline.createInterface({ input: process.stdin }).on("line", consoleCommand);
 
     process.on("SIGINT", () => {
         shuttingDown = true;

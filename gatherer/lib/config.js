@@ -46,6 +46,8 @@ const DEFAULTS = {
     quitWhenDone: false,
     chatter: true,
     reconnect: true, // crew mode: rejoin after being kicked or disconnected
+    dashboard: { port: 3000, host: "127.0.0.1" }, // web page to watch and command the bots; false to turn off
+    deathWhisper: true, // /msg the owner where a bot died
     tasks: [],
     bots: [], // crew mode: [{ "username": "Miner" }, { "username": "Farmer", ... }]
 };

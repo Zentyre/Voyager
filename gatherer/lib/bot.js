@@ -68,15 +68,17 @@ async function pickVersion(config) {
     return newest;
 }
 
-function startBot(config, crew = null) {
+// `reporter` (optional) receives this bot's status and log lines for the
+// dashboard: { status(snapshot), log(line), onCommand(fn) }.
+function startBot(config, crew = null, reporter = null) {
     if (!config.version) {
-        pickVersion(config).then((version) => createBot({ ...config, version }, crew));
+        pickVersion(config).then((version) => createBot({ ...config, version }, crew, reporter));
         return;
     }
-    return createBot(config, crew);
+    return createBot(config, crew, reporter);
 }
 
-function createBot(config, crew) {
+function createBot(config, crew, reporter) {
     const microsoft = config.auth === "microsoft";
     const bot = mineflayer.createBot({
         host: config.host,
@@ -111,6 +113,13 @@ function createBot(config, crew) {
     const ctx = createContext(bot, config);
     ctx.crew = crew;
     ctx.queue.push(...config.tasks);
+    if (reporter) {
+        const print = ctx.log;
+        ctx.log = (message) => {
+            print(message);
+            reporter.log(message);
+        };
+    }
     const { log, say } = ctx;
     if (bot.registry) installModSupport(bot, log);
     else bot.once("inject_allowed", () => installModSupport(bot, log));
@@ -166,8 +175,14 @@ function createBot(config, crew) {
     });
     bot.on("death", () => {
         ctx.stopCurrentAction();
+        const where = bot.entity?.position ? ctx.fmt(bot.entity.position) : null;
+        const dimension = String(bot.game?.dimension || "").replace(/^minecraft:/, "").replace(/_/g, " ");
         setTimeout(() => {
-            log(`Died${deathMessage ? ` (${deathMessage})` : ""}. Will carry on after respawning.`);
+            const cause = deathMessage ? ` (${deathMessage})` : "";
+            log(`Died${where ? ` at ${where}` : ""}${cause}. Will carry on after respawning.`);
+            if (config.owner && config.deathWhisper !== false && where) {
+                bot.whisper(config.owner, `I died at ${where}${dimension ? ` in the ${dimension}` : ""}${cause}.`);
+            }
             deathMessage = null;
         }, 300);
     });
@@ -213,24 +228,26 @@ function createBot(config, crew) {
 
     async function runQueue() {
         if (ctx.busy) return;
+        let replyTo = null; // whoever /msg'd the last task gets the wrap-up privately
         setBusy(true);
         try {
             if (ctx.idleWork) await ctx.idleWork; // e.g. finishing a meal
             while (ctx.queue.length > 0) {
                 const task = ctx.queue.shift();
+                replyTo = task.replyTo || null;
                 ctx.current = { ...task, startCount: ctx.countItem(task.item), deposited: 0 };
                 try {
                     await runTask(ctx.current);
                 } catch (err) {
                     if (err instanceof ctx.Stopped) return;
-                    say(`Couldn't get ${task.item}: ${err.message}`);
+                    ctx.tell(task.replyTo, `Couldn't get ${task.item}: ${err.message}`);
                 } finally {
                     ctx.current = null;
                 }
             }
             if (config.chest) await ctx.safely(ctx.depositAll);
             if (config.returnHome && ctx.home) await ctx.safely(() => ctx.goTo(ctx.home, 2));
-            say("All tasks done.");
+            ctx.tell(replyTo, "All tasks done.");
             if (config.quitWhenDone) bot.quit();
         } catch (err) {
             if (!(err instanceof ctx.Stopped)) log(err.message);
@@ -251,7 +268,7 @@ function createBot(config, crew) {
 
     async function runTask(task) {
         updateScaffolding();
-        say(`Getting ${task.count} ${task.item}.`);
+        ctx.tell(task.replyTo, `Getting ${task.count} ${task.item}.`);
         while (progress(task) < task.count) {
             ctx.checkStop();
             const need = task.count - progress(task);
@@ -261,7 +278,45 @@ function createBot(config, crew) {
                 if (!(err instanceof ctx.Retry)) throw err;
             }
         }
-        say(`Got ${task.count} ${task.item}.`);
+        ctx.tell(task.replyTo, `Got ${task.count} ${task.item}.`);
+    }
+
+    // Everything the dashboard shows about this bot.
+    function snapshot() {
+        const e = bot.entity;
+        const counts = {};
+        if (e) for (const i of bot.inventory.items()) counts[i.name] = (counts[i.name] || 0) + i.count;
+        const t = ctx.current;
+        return {
+            label: config.username,
+            name: bot.username || config.username,
+            online: Boolean(e),
+            version: bot.version,
+            health: e ? Math.round(bot.health) : null,
+            food: e ? bot.food : null,
+            position: e ? { x: Math.floor(e.position.x), y: Math.floor(e.position.y), z: Math.floor(e.position.z) } : null,
+            dimension: String(bot.game?.dimension || "").replace(/^minecraft:/, ""),
+            gameMode: bot.game?.gameMode,
+            time: bot.time?.timeOfDay,
+            busy: Boolean(ctx.busy),
+            ward: ctx.ward || null,
+            task: t ? { item: t.item, count: t.count, done: Math.max(0, Math.min(progress(t), t.count)) } : null,
+            queue: ctx.queue.map((q) => ({ item: q.item, count: q.count })),
+            held: bot.heldItem?.name || null,
+            armor: ctx.equipped ? ctx.equipped().map((i) => i.name) : [],
+            inventory: Object.entries(counts)
+                .map(([name, count]) => ({ name, count }))
+                .sort((a, b) => b.count - a.count),
+            freeSlots: e ? bot.inventory.emptySlotCount() : null,
+        };
+    }
+
+    if (reporter) {
+        const timer = setInterval(() => reporter.status(snapshot()), 1000);
+        bot.once("end", () => {
+            clearInterval(timer);
+            reporter.status({ ...snapshot(), online: false });
+        });
     }
 
     function statusText() {
@@ -311,15 +366,19 @@ function createBot(config, crew) {
         "get <item> [count]", "plan <item>", "farm", "plant <crop> [plots]", "breed <animal> [pairs]",
         "brew <potion> [count] [long|strong|splash]", "sleep", "water", "bucket", "armor [material]",
         "guard [player]", "bow [arrows]", "give [item|all] [count]",
-        "learned", "forget", "stop", "status", "queue", "inv", "eat", "come", "deposit", "home", "quit",
+        "learned", "forget", "stop", "status", "queue", "inv", "eat", "come", "deposit", "home", "say <text>", "quit",
     ]
         .map((c) => config.commandPrefix + c)
         .join(" | ") + (crew ? ` | crew: ${config.commandPrefix}<botname> <cmd>, ${config.commandPrefix}all <cmd>, ${config.commandPrefix}crew` : "");
 
     // `broadcast` is true when the whole crew got this command: then a bot
     // with nothing to contribute stays quiet instead of everyone saying so.
-    async function handleCommand(text, fromPlayer, { broadcast = false } = {}) {
+    async function handleCommand(text, fromPlayer, { broadcast = false, whisper = false } = {}) {
         if (!ctx.planner) return; // not spawned yet
+        // Asked by /msg: answer by /msg.
+        const privately = whisper && fromPlayer;
+        const say = privately ? (message) => ctx.tell(fromPlayer, message) : ctx.say;
+        const chatOut = (line) => (privately ? bot.whisper(fromPlayer, line) : bot.chat(line));
         const [cmd, ...args] = text.trim().split(/\s+/);
         switch ((cmd || "").toLowerCase()) {
             case "get":
@@ -331,7 +390,7 @@ function createBot(config, crew) {
                 if (!bot.registry.itemsByName[item]) return say(`There's no item called ${item}.`);
                 const count = parseInt(args[1] || "1", 10);
                 if (!(count > 0)) return;
-                ctx.queue.push({ item, count });
+                ctx.queue.push({ item, count, replyTo: privately ? fromPlayer : null });
                 say(`Queued ${count} ${item}.`);
                 runQueue();
                 break;
@@ -341,7 +400,7 @@ function createBot(config, crew) {
                 if (!item || !bot.registry.itemsByName[item]) return say(`Usage: ${config.commandPrefix}plan <item>`);
                 const lines = ctx.planner.explain(item);
                 lines.forEach((line) => log(line));
-                if (fromPlayer) lines.slice(0, 5).forEach((line) => bot.chat(line.trim()));
+                if (fromPlayer) lines.slice(0, 5).forEach((line) => chatOut(line.trim()));
                 break;
             }
             case "farm":
@@ -398,7 +457,7 @@ function createBot(config, crew) {
             case "memory": {
                 const lines = ctx.learn.summary();
                 lines.forEach((line) => log(line));
-                if (fromPlayer) lines.slice(0, 4).forEach((line) => bot.chat(line.slice(0, 250)));
+                if (fromPlayer) lines.slice(0, 4).forEach((line) => chatOut(line.slice(0, 250)));
                 break;
             }
             case "forget":
@@ -466,6 +525,9 @@ function createBot(config, crew) {
                 ctx.stopCurrentAction();
                 if (bot.isSleeping) bot.wake().catch(() => {});
                 say("Stopped and cleared the queue.");
+                break;
+            case "say":
+                if (args.length) bot.chat(args.join(" "));
                 break;
             case "status":
                 say(statusText());
@@ -551,8 +613,16 @@ function createBot(config, crew) {
         if (!fromOwner(username)) return;
         const text = stripPrefix(message.trim()) ?? message;
         const [first, ...rest] = text.trim().split(/\s+/);
-        run(first?.toLowerCase() === bot.username.toLowerCase() ? rest.join(" ") : text, username);
+        run(first?.toLowerCase() === bot.username.toLowerCase() ? rest.join(" ") : text, username, { whisper: true });
     });
+
+    // Commands from the dashboard (single bot; in a crew they come through the coordinator).
+    if (!crew && reporter?.onCommand) {
+        reporter.onCommand((text) => {
+            const mine = route(stripPrefix(text.trim()) ?? text, null);
+            if (mine !== null) run(mine, null);
+        });
+    }
 
     if (crew) {
         // Commands handed out by the crew coordinator.

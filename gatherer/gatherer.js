@@ -11,6 +11,8 @@
 //   node gatherer.js oak_log:64 iron_pickaxe:1
 //   node gatherer.js --config other.json coal:16
 //   node gatherer.js --bot Miner              # just one bot from "bots"
+//
+// While it runs, http://localhost:3000 shows a dashboard to watch and command the bots.
 
 // Teach the Minecraft libraries about versions newer than they ship (26.3).
 require("./lib/compat").registerExtraVersions();
@@ -29,5 +31,19 @@ try {
 if (configs.length > 1) {
     require("./lib/crew").startCrew(configs);
 } else {
-    require("./lib/bot").startBot(configs[0]);
+    const config = configs[0];
+    let reporter = null;
+    if (config.dashboard !== false) {
+        const handlers = [];
+        const hub = require("./lib/dashboard").startDashboard(config.dashboard, {
+            names: [config.username],
+            onCommand: (target, text) => handlers.forEach((fn) => fn(text)),
+        });
+        reporter = {
+            status: (s) => hub.status(s),
+            log: (line) => hub.log(config.username, line),
+            onCommand: (fn) => handlers.push(fn),
+        };
+    }
+    require("./lib/bot").startBot(config, null, reporter);
 }

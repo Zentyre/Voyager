@@ -40,6 +40,13 @@ function createContext(bot, config) {
         if (bot.entity && config.chatter !== false) bot.chat(message);
     };
 
+    // Reply to someone privately (/msg) when they asked privately.
+    ctx.tell = (player, message) => {
+        if (!player) return ctx.say(message);
+        ctx.log(message);
+        if (bot.entity) bot.whisper(player, message);
+    };
+
     ctx.fmt = (pos) => `${Math.floor(pos.x)} ${Math.floor(pos.y)} ${Math.floor(pos.z)}`;
 
     // Includes worn armor and the off-hand, so equipping something

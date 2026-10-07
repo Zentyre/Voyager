@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gatherer Dashboard</title>
+<style>
+:root {
+  --bg: #0f1216;
+  --panel: #171b21;
+  --panel-2: #1d232b;
+  --line: #2a313b;
+  --text: #e6e9ee;
+  --muted: #8b94a3;
+  --accent: #5fb36b;
+  --accent-text: #0b1a0e;
+  --warn: #e0a84a;
+  --bad: #e06464;
+  --info: #6aa7e8;
+  --health: #e06464;
+  --food: #d9944a;
+  --radius: 10px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f3f4f6;
+    --panel: #ffffff;
+    --panel-2: #f6f7f9;
+    --line: #dde1e6;
+    --text: #1b1f24;
+    --muted: #616b78;
+    --accent: #2f8a3c;
+    --accent-text: #ffffff;
+    --warn: #b7791f;
+    --bad: #c53030;
+    --info: #2b6cb0;
+    --health: #d64545;
+    --food: #c27022;
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+header {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px;
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+}
+h1 { font-size: 17px; margin: 0 8px 0 0; display: flex; align-items: center; gap: 8px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; flex: none; }
+.dot.on { background: var(--accent); }
+.dot.off { background: var(--bad); }
+form.cmd { display: flex; gap: 6px; flex: 1 1 420px; min-width: 0; }
+select, input, button {
+  font: inherit; color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  min-width: 0;
+}
+input:focus, select:focus, button:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
+form.cmd input { flex: 1; }
+@media (max-width: 600px) {
+  form.cmd { flex-wrap: wrap; }
+  #target { flex: 1 1 100%; }
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+button.danger { color: var(--bad); }
+main { padding: 16px; display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); align-items: start; }
+@media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+#bots { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.card.offline { opacity: 0.6; }
+.top { display: flex; align-items: center; gap: 8px; }
+.top .name { font-weight: 650; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top .label { color: var(--muted); font-size: 12px; }
+.chip { margin-left: auto; font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.chip.working { color: var(--info); border-color: var(--info); }
+.chip.idle { color: var(--accent); border-color: var(--accent); }
+.chip.guarding { color: var(--warn); border-color: var(--warn); }
+.chip.offline { color: var(--bad); border-color: var(--bad); }
+.bars { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 8px; align-items: center; font-size: 12px; color: var(--muted); }
+.bar { height: 8px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0; transition: width 0.4s; }
+.bar.health > i { background: var(--health); }
+.bar.food > i { background: var(--food); }
+.bar.task > i { background: var(--info); }
+.num { font-variant-numeric: tabular-nums; color: var(--text); }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 13px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.coords { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; cursor: pointer; }
+.coords:hover { text-decoration: underline; }
+.task { display: flex; flex-direction: column; gap: 4px; }
+.task .line { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.muted { color: var(--muted); }
+.pills { display: flex; flex-wrap: wrap; gap: 4px; }
+.pill { font-size: 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.actions button { padding: 5px 9px; font-size: 13px; }
+form.get { display: flex; gap: 6px; }
+form.get input[name=item] { flex: 1; }
+form.get input[name=count] { width: 72px; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.inv { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+aside {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex; flex-direction: column;
+  height: calc(100vh - 110px); min-height: 320px;
+  position: sticky; top: 76px;
+}
+@media (max-width: 900px) { aside { position: static; height: 420px; } }
+aside .head { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+aside .head strong { margin-right: auto; }
+#log { overflow-y: auto; padding: 8px 12px; font-size: 12.5px; flex: 1; }
+#log .row { padding: 3px 0; border-bottom: 1px dashed var(--line); display: grid; grid-template-columns: auto auto 1fr; gap: 8px; }
+#log .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+#log .b { font-weight: 600; }
+#log .row.you .b { color: var(--info); }
+#log .row.bad .msg { color: var(--bad); }
+.empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--line); border-radius: var(--radius); }
+.toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span id="conn" class="dot"></span> Gatherer</h1>
+  <form class="cmd" id="cmdForm" autocomplete="off">
+    <select id="target" aria-label="Send to"></select>
+    <input id="cmdText" placeholder="Command, e.g. get oak_log 64 · status · guard Zentyre" aria-label="Command">
+    <button class="primary">Send</button>
+  </form>
+</header>
+<main>
+  <section id="bots"><div class="empty">Waiting for bots…</div></section>
+  <aside>
+    <div class="head"><strong>Activity</strong><select id="logFilter" aria-label="Show log for"><option value="">All bots</option></select></div>
+    <div id="log"></div>
+  </aside>
+</main>
+<datalist id="items"></datalist>
+<div class="toast" id="toast"></div>
+<script>
+const state = { bots: new Map(), logs: [] };
+const $ = (sel, root = document) => root.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pretty = (s) => String(s || "").replace(/_/g, " ");
+
+function toast(text) {
+  const el = $("#toast");
+  el.textContent = text;
+  el.classList.add("show");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => el.classList.remove("show"), 1600);
+}
+
+async function command(target, text) {
+  try {
+    const res = await fetch("command", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ target, text }) });
+    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+  } catch (err) {
+    toast("Couldn't send: " + err.message);
+  }
+}
+
+// ---------- header: target picker and command line ----------
+function renderTargets() {
+  const sel = $("#target"), filter = $("#logFilter");
+  const keep = sel.value, keepFilter = filter.value;
+  const bots = [...state.bots.values()];
+  const opts = [];
+  if (bots.length > 1) opts.push(["auto", "Crew (split jobs)"], ["all", "All bots"]);
+  for (const b of bots) opts.push([b.label, b.name || b.label]);
+  if (!opts.length) opts.push(["auto", "Bot"]);
+  sel.innerHTML = opts.map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join("");
+  if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  filter.innerHTML = `<option value="">All bots</option>` + bots.map((b) => `<option value="${esc(b.label)}">${esc(b.name || b.label)}</option>`).join("");
+  filter.value = keepFilter;
+}
+$("#cmdForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("#cmdText").value.trim();
+  if (!text) return;
+  command($("#target").value, text);
+  $("#cmdText").value = "";
+});
+
+// ---------- bot cards ----------
+const QUICK = [["status", "Status"], ["inv", "Inventory"], ["eat", "Eat"], ["sleep", "Sleep"], ["home", "Home"], ["deposit", "Deposit"], ["armor", "Armor"]];
+
+function makeCard(label) {
+  const card = document.createElement("article");
+  card.className = "card";
+  card.dataset.label = label;
+  card.innerHTML = `
+    <div class="top"><span class="dot"></span><span class="name"></span><span class="label"></span><span class="chip"></span></div>
+    <div class="bars">
+      <span>Health</span><div class="bar health"><i></i></div><span class="num hp"></span>
+      <span>Food</span><div class="bar food"><i></i></div><span class="num fd"></span>
+    </div>
+    <div class="task"></div>
+    <dl class="facts">
+      <dt>Position</dt><dd><span class="coords" title="Click to copy"></span></dd>
+      <dt>Holding</dt><dd class="held"></dd>
+      <dt>Armor</dt><dd class="armor"></dd>
+      <dt>Queue</dt><dd class="queue"></dd>
+    </dl>
+    <details><summary class="invsum">Inventory</summary><div class="inv"></div></details>
+    <form class="get" autocomplete="off">
+      <input name="item" list="items" placeholder="Get item… (oak_log)" aria-label="Item to get">
+      <input name="count" type="number" min="1" value="16" aria-label="How many">
+      <button class="primary">Get</button>
+    </form>
+    <div class="actions">${QUICK.map(([c, t]) => `<button type="button" data-cmd="${c}">${t}</button>`).join("")}<button type="button" class="danger" data-cmd="stop">Stop</button></div>`;
+  card.querySelector("form.get").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const item = f.item.value.trim().toLowerCase().replace(/\s+/g, "_");
+    if (!item) return;
+    command(label, `get ${item} ${Math.max(1, parseInt(f.count.value, 10) || 1)}`);
+    f.item.value = "";
+  });
+  card.querySelector(".actions").addEventListener("click", (e) => {
+    const cmd = e.target.closest("button")?.dataset.cmd;
+    if (cmd) command(label, cmd);
+  });
+  card.querySelector(".coords").addEventListener("click", (e) => {
+    const text = e.target.textContent;
+    if (text && navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast("Copied " + text));
+  });
+  return card;
+}
+
+function renderBot(b) {
+  const root = $("#bots");
+  $(".empty", root)?.remove();
+  let card = root.querySelector(`[data-label="${CSS.escape(b.label)}"]`);
+  if (!card) {
+    card = makeCard(b.label);
+    root.appendChild(card);
+  }
+  card.classList.toggle("offline", !b.online);
+  $(".top .dot", card).className = "dot " + (b.online ? "on" : "off");
+  $(".name", card).textContent = b.name || b.label;
+  $(".label", card).textContent = b.name && b.name !== b.label ? b.label : "";
+  const chip = $(".chip", card);
+  const mode = !b.online ? "offline" : b.ward ? "guarding" : b.busy ? "working" : "idle";
+  chip.className = "chip " + mode;
+  chip.textContent = !b.online ? "Offline" : b.ward ? "Guarding " + b.ward : b.busy ? "Working" : "Idle";
+
+  const hp = b.health ?? 0, fd = b.food ?? 0;
+  $(".bar.health > i", card).style.width = (hp / 20) * 100 + "%";
+  $(".bar.food > i", card).style.width = (fd / 20) * 100 + "%";
+  $(".hp", card).textContent = b.online ? `${hp}/20` : "–";
+  $(".fd", card).textContent = b.online ? `${fd}/20` : "–";
+
+  const task = $(".task", card);
+  if (b.task) {
+    const pct = b.task.count ? Math.round((b.task.done / b.task.count) * 100) : 0;
+    task.innerHTML = `<div class="line"><span>Getting <b>${esc(pretty(b.task.item))}</b></span><span class="num">${b.task.done}/${b.task.count}</span></div><div class="bar task"><i style="width:${pct}%"></i></div>`;
+  } else {
+    task.innerHTML = `<div class="line muted">${b.online ? (b.ward ? "On guard duty" : "No task") : "Not connected"}</div>`;
+  }
+
+  const p = b.position;
+  $(".coords", card).textContent = p ? `${p.x} ${p.y} ${p.z}` : "–";
+  $(".coords", card).title = p ? `${pretty(b.dimension) || "world"} · click to copy` : "";
+  $(".held", card).textContent = !b.online ? "–" : b.held ? pretty(b.held) : "nothing";
+  $(".armor", card).textContent = !b.online ? "–" : b.armor?.length ? b.armor.map(pretty).join(", ") : "none";
+  $(".queue", card).innerHTML = b.queue?.length
+    ? `<span class="pills">${b.queue.map((q) => `<span class="pill">${esc(pretty(q.item))} ×${q.count}</span>`).join("")}</span>`
+    : `<span class="muted">empty</span>`;
+  const inv = b.inventory || [];
+  $(".invsum", card).textContent = `Inventory · ${inv.reduce((n, i) => n + i.count, 0)} items` + (b.freeSlots != null ? ` · ${b.freeSlots} free slots` : "");
+  $(".inv", card).innerHTML = inv.length ? inv.map((i) => `<span class="pill">${esc(pretty(i.name))} ×${i.count}</span>`).join("") : `<span class="muted">empty</span>`;
+}
+
+// ---------- log ----------
+const time = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+function logRow(entry) {
+  const bot = state.bots.get(entry.bot);
+  const who = entry.bot === "you" ? "You" : bot?.name || entry.bot;
+  const bad = /couldn't|error|died|kicked|disconnect|refus|won't/i.test(entry.text);
+  return `<div class="row${entry.bot === "you" ? " you" : ""}${bad ? " bad" : ""}" data-bot="${esc(entry.bot)}"><span class="t">${time(entry.t)}</span><span class="b">${esc(who)}</span><span class="msg">${esc(entry.text)}</span></div>`;
+}
+function renderLog() {
+  const f = $("#logFilter").value;
+  const rows = state.logs.filter((e) => !f || e.bot === f || e.bot === "you");
+  const el = $("#log");
+  el.innerHTML = rows.map(logRow).join("");
+  el.scrollTop = el.scrollHeight;
+}
+function addLog(entry) {
+  state.logs.push(entry);
+  if (state.logs.length > 400) state.logs.shift();
+  const f = $("#logFilter").value;
+  if (f && entry.bot !== f && entry.bot !== "you") return;
+  const el = $("#log");
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  el.insertAdjacentHTML("beforeend", logRow(entry));
+  while (el.children.length > 400) el.firstChild.remove();
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+$("#logFilter").addEventListener("change", renderLog);
+
+// ---------- item names for the "get" boxes ----------
+async function loadItems() {
+  try {
+    const names = await (await fetch("items")).json();
+    if (!names.length) return setTimeout(loadItems, 3000);
+    $("#items").innerHTML = names.map((n) => `<option value="${esc(n)}">`).join("");
+  } catch (err) {
+    setTimeout(loadItems, 5000);
+  }
+}
+
+// ---------- live updates ----------
+function connect() {
+  const es = new EventSource("events");
+  es.addEventListener("open", () => ($("#conn").className = "dot on"));
+  es.addEventListener("error", () => ($("#conn").className = "dot off"));
+  es.addEventListener("snapshot", (e) => {
+    const data = JSON.parse(e.data);
+    state.bots.clear();
+    for (const b of data.bots) state.bots.set(b.label, b);
+    state.logs = data.logs;
+    $("#bots").innerHTML = state.bots.size ? "" : `<div class="empty">Waiting for bots…</div>`;
+    for (const b of state.bots.values()) renderBot(b);
+    renderTargets();
+    renderLog();
+  });
+  es.addEventListener("status", (e) => {
+    const b = JSON.parse(e.data);
+    const known = state.bots.has(b.label);
+    const renamed = known && state.bots.get(b.label).name !== b.name;
+    state.bots.set(b.label, b);
+    renderBot(b);
+    if (!known || renamed) renderTargets();
+  });
+  es.addEventListener("log", (e) => addLog(JSON.parse(e.data)));
+}
+connect();
+loadItems();
+</script>
+</body>
+</html>

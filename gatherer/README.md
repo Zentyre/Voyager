@@ -46,6 +46,25 @@ node gatherer.js --bot Miner               # only this bot from "bots" (or --bot
 Use item names as they appear in `/give`: `raw_iron`, `iron_ingot`,
 `cobblestone`, `oak_log`, `torch`, `furnace`, `leather`, `cooked_beef`, …
 
+### Dashboard
+
+While the bots run, open **http://localhost:3000** in a browser on the same
+computer. You get a card per bot with:
+- health, food, position (click to copy), what it's holding and wearing, inventory;
+- the current task with a progress bar, and the queue;
+- a "Get item" box with item-name suggestions, and buttons for status,
+  inventory, eat, sleep, home, deposit, armor and stop.
+
+The bar at the top sends any command (the same ones as in chat, without the
+`!`) to one bot, all bots, or the crew (which splits gathering jobs). The
+Activity panel on the right shows what each bot is doing, live.
+
+It only accepts connections from this computer. To open it from your phone
+on the same Wi-Fi, set `"dashboard": { "port": 3000, "host": "0.0.0.0" }` in
+`config.json`: the console then prints a link with an access token. Anyone
+with that link can command the bots, so don't share it. `"dashboard": false`
+turns it off.
+
 ## Accounts (online-mode servers)
 
 On a server with `online-mode=true` every bot needs **its own Minecraft Java
@@ -217,7 +236,13 @@ learning off.
 
 In game chat, commands start with `!` and only the owner (`Zentyre` by default)
 is obeyed. Whispers (`/msg Gatherer get oak_log`) and the terminal work with or
-without the `!`.
+without the `!`. **A command sent by `/msg` gets its answers by `/msg`**,
+including the progress of a task queued that way, so nothing shows in public
+chat.
+
+When a bot dies it sends the owner a private message with where it happened,
+e.g. `I died at -390 70 1310 in the overworld (Zyntharic was slain by Zombie).`
+(`"deathWhisper": false` turns that off.)
 
 | Command                          | What it does                                  |
 |----------------------------------|-----------------------------------------------|
@@ -244,6 +269,7 @@ without the `!`.
 | `!come`                          | Walk to you (chat only)                       |
 | `!deposit`                       | Put requested items in the configured chest   |
 | `!home`                          | Return to where it spawned                    |
+| `!say <text>`                    | Say something in chat                         |
 | `!help`                          | List commands                                 |
 | `!quit`                          | Disconnect                                    |
 
@@ -294,6 +320,8 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `returnHome`         | `true`        | Walk back to the spawn point after the queue is done              |
 | `quitWhenDone`       | `false`       | Disconnect when the queue is done                                 |
 | `chatter`            | `true`        | Post progress messages in game chat                               |
+| `deathWhisper`       | `true`        | `/msg` the owner where the bot died                               |
+| `dashboard`          | `{ "port": 3000, "host": "127.0.0.1" }` | Web dashboard; `false` to turn it off |
 | `tasks`              | `[]`          | `[{ "item": "oak_log", "count": 32 }, …]`                         |
 | `bots`               | `[]`          | Crew members: `[{ "username": "Miner" }, …]`, each may override any setting |
 | `reconnect`          | `true`        | Crew: rejoin automatically after being kicked or disconnected     |
@@ -334,6 +362,8 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `lib/bot.js`        | One bot: connection, task queue, commands                 |
 | `lib/crew.js`       | Crew coordinator (main thread) and its link to each bot   |
 | `lib/crew-worker.js`| Worker-thread entry point for a crew member               |
+| `lib/dashboard.js`  | Web dashboard server (status stream, commands)            |
+| `dashboard/index.html` | The dashboard page                                     |
 | `lib/compat.js`     | Minecraft 26.3 support: registers `compat/26.3` data, adapts packets |
 | `lib/mods.js`       | Modded servers: unknown modded blocks, list of the server's mods |
 | `compat/`           | Generated 26.3 data and the script that builds it         |
