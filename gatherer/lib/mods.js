@@ -5,8 +5,65 @@
 //     the libraries treat those as air: the bot would walk into them, fall
 //     through them, or get stuck. They become a "modded_block" instead: solid,
 //     never broken.
+//   - Mods like Visual Workbench, Easy Anvils and Easy Magic swap the crafting
+//     table, anvil and enchanting table screens for their own, which the bot
+//     didn't recognise, so it never saw them open. Underneath they are the
+//     vanilla screens (same slots and buttons), so an unknown screen is mapped
+//     to the vanilla one by its title or by the block that was just used.
 //   - The mods the server announces (through its plugin channels) are listed
 //     once after joining, to help tell which one is causing trouble.
+
+const nbt = require("prismarine-nbt");
+const { Vec3 } = require("vec3");
+
+// Screen titles (translation keys) and blocks -> the vanilla screen they open.
+const SCREEN_BY_TITLE = {
+    "container.crafting": "minecraft:crafting",
+    "container.repair": "minecraft:anvil",
+    "container.enchant": "minecraft:enchantment",
+    "container.grindstone_title": "minecraft:grindstone",
+    "container.upgrade": "minecraft:smithing",
+    "container.stonecutter": "minecraft:stonecutter",
+    "container.loom": "minecraft:loom",
+    "container.cartography_table": "minecraft:cartography",
+    "container.brewing": "minecraft:brewing_stand",
+    "container.furnace": "minecraft:furnace",
+    "container.blast_furnace": "minecraft:blast_furnace",
+    "container.smoker": "minecraft:smoker",
+};
+const SCREEN_BY_BLOCK = {
+    crafting_table: "minecraft:crafting",
+    anvil: "minecraft:anvil",
+    chipped_anvil: "minecraft:anvil",
+    damaged_anvil: "minecraft:anvil",
+    enchanting_table: "minecraft:enchantment",
+    grindstone: "minecraft:grindstone",
+    smithing_table: "minecraft:smithing",
+    stonecutter: "minecraft:stonecutter",
+    loom: "minecraft:loom",
+    cartography_table: "minecraft:cartography",
+    brewing_stand: "minecraft:brewing_stand",
+    furnace: "minecraft:furnace",
+    blast_furnace: "minecraft:blast_furnace",
+    smoker: "minecraft:smoker",
+};
+
+// The translation key in a screen title ({"translate": "container.crafting"}), if any.
+function titleKey(title) {
+    try {
+        const value = title && typeof title === "object" && "type" in title ? nbt.simplify(title) : title;
+        if (typeof value === "string") {
+            try {
+                return JSON.parse(value).translate || null;
+            } catch (err) {
+                return value.startsWith("container.") ? value : null;
+            }
+        }
+        return value?.translate || null;
+    } catch (err) {
+        return null;
+    }
+}
 
 const VANILLA_NAMESPACES = new Set(["minecraft", "c", "fabric", "neoforge", "forge", "bungeecord", "velocity", "paper", "bukkit"]);
 
@@ -79,6 +136,34 @@ function installModSupport(bot, log) {
             const mods = namespaces.size ? ` Mods it announces: ${[...namespaces].sort().join(", ")}.` : "";
             log(`Server: ${brand || "unknown"}.${mods}`);
         }, 5000);
+    });
+
+    // Modded screens -> vanilla ones (see the top of this file).
+    const windows = require("prismarine-windows")(registry).windows;
+    const vanillaScreens = new Map(); // "minecraft:crafting" -> protocol id
+    for (const [key, w] of Object.entries(windows)) if (w && typeof w.type === "number") vanillaScreens.set(key, w.type);
+    const knownIds = new Set(vanillaScreens.values());
+    const moddedScreens = new Map(); // modded id -> vanilla key
+    let lastUsed = null; // the block the bot last clicked
+    const write = client.write.bind(client);
+    client.write = (name, params) => {
+        if (name === "block_place" && params?.location) lastUsed = { pos: params.location, at: Date.now() };
+        return write(name, params);
+    };
+    client.prependListener("open_window", (packet) => {
+        if (vanillaScreens.size === 0 || knownIds.has(packet.inventoryType)) return;
+        let key = moddedScreens.get(packet.inventoryType);
+        if (!key) {
+            key = SCREEN_BY_TITLE[titleKey(packet.windowTitle)];
+            if (!key && lastUsed && Date.now() - lastUsed.at < 5000) {
+                const block = bot.blockAt(new Vec3(lastUsed.pos.x, lastUsed.pos.y, lastUsed.pos.z));
+                key = SCREEN_BY_BLOCK[block?.name];
+            }
+            if (!key || !vanillaScreens.has(key)) return;
+            moddedScreens.set(packet.inventoryType, key);
+            log(`This server's ${key.replace("minecraft:", "").replace("_", " ")} screen comes from a mod; using it like the normal one.`);
+        }
+        packet.inventoryType = vanillaScreens.get(key);
     });
 
     return { moddedType };
