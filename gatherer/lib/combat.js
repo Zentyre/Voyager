@@ -18,7 +18,7 @@ const ARMOR_SLOTS = { helmet: "head", chestplate: "torso", leggings: "legs", boo
 const ARMOR_RANK = ["leather", "golden", "chainmail", "turtle", "iron", "diamond", "netherite"];
 
 // Fighting styles the bot chooses between per mob type:
-//   crit - jump and hit while falling (+50% damage, slower)
+//   crit - jump and hit while falling, not sprinting (+50% damage, slower)
 //   fast - hit as soon as the weapon is ready
 //   kite - hit, then step back out of reach
 //   bow  - shoot from a distance (only when carrying a bow and arrows)
@@ -144,17 +144,18 @@ function installCombat(ctx) {
                 // Block arrows while closing in on ranged mobs.
                 raiseShield(distance > REACH + 0.5 && (RANGED.has(mob.name) || rangedNearby()));
 
-                if (distance <= REACH + 0.2 && Date.now() - lastSwing >= cooldownMs) {
+                // Going for crits: never throw a plain swing mid-jump.
+                const airborne = style === "crit" && !bot.entity.onGround && !bot.entity.isInWater;
+                if (!airborne && distance <= REACH + 0.2 && Date.now() - lastSwing >= cooldownMs) {
                     raiseShield(false);
-                    if (style === "crit" && bot.entity.onGround && !bot.entity.isInWater) {
-                        bot.setControlState("jump", true);
-                        await bot.waitForTicks(1);
-                        bot.setControlState("jump", false);
-                        for (let i = 0; i < 8 && bot.entity.velocity.y >= 0; i++) await bot.waitForTicks(1);
+                    if (style === "crit" && !bot.entity.isInWater) {
+                        await critSwing(mob);
+                        bot.pathfinder.setGoal(follow, true);
+                    } else {
+                        if (!mob.isValid) break;
+                        await bot.lookAt(aimPoint(mob), true);
+                        bot.attack(mob);
                     }
-                    if (!mob.isValid) break;
-                    await bot.lookAt(mob.position.offset(0, (mob.height || 1.6) * 0.6, 0), true);
-                    bot.attack(mob);
                     lastSwing = Date.now();
                     if (style === "kite") {
                         bot.pathfinder.setGoal(null);
@@ -173,6 +174,34 @@ function installCombat(ctx) {
             bot.clearControlStates();
             ctx.target = null;
         }
+    }
+
+    function aimPoint(mob) {
+        return mob.position.offset(0, (mob.height || 1.6) * 0.6, 0);
+    }
+
+    // A critical hit (+50% damage) needs the hit to land while falling after a
+    // jump, and not while sprinting. So: stop chasing and sprinting, jump, and
+    // swing on the way down if it's still in reach (otherwise a normal hit).
+    async function critSwing(mob) {
+        bot.pathfinder.setGoal(null);
+        bot.clearControlStates(); // also stops sprinting, which cancels crits
+        await bot.lookAt(aimPoint(mob), true);
+        await bot.waitForTicks(1); // let the server see we stopped sprinting
+        bot.setControlState("jump", true);
+        await bot.waitForTicks(1);
+        bot.setControlState("jump", false);
+        for (let i = 0; i < 12; i++) {
+            if (!mob.isValid) return;
+            if (!bot.entity.onGround && bot.entity.velocity.y < -0.05) break; // on the way down
+            if (bot.entity.onGround && i > 2) break; // the jump didn't happen (ceiling, water)
+            await bot.waitForTicks(1);
+        }
+        // The server decides from our position updates, so let it see us drop first.
+        if (!bot.entity.onGround) await bot.waitForTicks(1);
+        if (!mob.isValid || mob.position.distanceTo(bot.entity.position) > REACH + 0.5) return;
+        await bot.lookAt(aimPoint(mob), true);
+        bot.attack(mob);
     }
 
     // ---------- running away ----------
@@ -255,10 +284,11 @@ function installCombat(ctx) {
         return won;
     }
 
-    // Hunting: animals just get hit; hostile mobs use (and teach) the
-    // learned fighting style. Errors propagate so the hunt can move on.
+    // Hunting: animals always get critical hits (fewer swings, less chasing);
+    // hostile mobs use (and teach) the learned fighting style. Errors propagate
+    // so the hunt can move on.
     async function huntMob(mob) {
-        if (!isHostile(mob)) return attack(mob, { style: "fast" });
+        if (!isHostile(mob)) return attack(mob, { style: "crit" });
         const { style, context } = chooseStyle(mob);
         if (style === "flee") throw new Error(`not fighting a ${mob.name}`);
         const startHealth = bot.health;
