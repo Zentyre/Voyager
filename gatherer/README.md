@@ -83,6 +83,14 @@ through Microsoft's page.
 - With `online-mode=true`, names are verified, so only the real Zentyre can
   command the bots.
 
+**Newer Minecraft than the bot supports?** The Minecraft libraries the bot uses
+support versions up to 26.1 (as of October 2026). If your server is newer (e.g.
+26.3), the bot connects as 26.1 and says so. Install the
+[ViaVersion](https://modrinth.com/plugin/viaversion) and
+[ViaBackwards](https://modrinth.com/plugin/viabackwards) plugins on the server
+(Paper/Spigot/Purpur/Fabric) so older clients can join. Later, run `npm update`
+when the libraries add newer versions.
+
 On a LAN world or an `online-mode=false` server, leave `"auth": "offline"` and
 any names work with no accounts. Anyone can then join as any name, including
 yours, though.

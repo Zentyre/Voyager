@@ -26,7 +26,38 @@ const { installBodyguard } = require("./bodyguard");
 const ARMOR_PIECES = ["helmet", "chestplate", "leggings", "boots"];
 const GEAR = /_(pickaxe|axe|shovel|hoe|sword|helmet|chestplate|leggings|boots)$|^(bow|shield|arrow|spectral_arrow|tipped_arrow|bucket|water_bucket)$/;
 
+// The server's Minecraft version, if the bot can speak it; otherwise the
+// newest version it can (which works when the server runs ViaVersion +
+// ViaBackwards, plugins that let older clients join newer servers).
+async function pickVersion(config) {
+    const mcData = require("minecraft-data");
+    const newest = mineflayer.latestSupportedVersion;
+    let server;
+    try {
+        server = await require("minecraft-protocol").ping({ host: config.host, port: config.port });
+    } catch (err) {
+        return false; // can't ping; let mineflayer try on its own
+    }
+    const name = (String(server?.version?.name || "").match(/\d+\.\d+(\.\d+)?/) || [])[0];
+    const known = name && mcData(name);
+    if (known?.protocol) return false; // supported: auto-detect works
+    console.log(
+        `[${config.username}] This server runs Minecraft ${name || server?.version?.name}, but the bot's ` +
+            `Minecraft library only supports up to ${newest} so far. Connecting as ${newest}: that works if ` +
+            `the server has the ViaVersion and ViaBackwards plugins. Without them it will say "Outdated client".`
+    );
+    return newest;
+}
+
 function startBot(config, crew = null) {
+    if (!config.version) {
+        pickVersion(config).then((version) => createBot({ ...config, version }, crew));
+        return;
+    }
+    return createBot(config, crew);
+}
+
+function createBot(config, crew) {
     const microsoft = config.auth === "microsoft";
     const bot = mineflayer.createBot({
         host: config.host,
@@ -99,7 +130,16 @@ function startBot(config, crew = null) {
     });
 
     bot.on("wake", () => log("Woke up."));
-    bot.on("kicked", (reason) => log(`Kicked: ${typeof reason === "string" ? reason : JSON.stringify(reason)}`));
+    bot.on("kicked", (reason) => {
+        const text = typeof reason === "string" ? reason : JSON.stringify(reason);
+        log(`Kicked: ${text}`);
+        if (/outdated|incompatible|version/i.test(text)) {
+            log(
+                `The server doesn't accept this bot's Minecraft version (${bot.version}). Install the ViaVersion ` +
+                    `and ViaBackwards plugins on the server, or set "version" in config.json to the server's version once supported.`
+            );
+        }
+    });
     bot.on("error", (err) => log(`Error: ${err.message}`));
     bot.on("end", (reason) => {
         log(`Disconnected (${reason}).`);
@@ -490,4 +530,4 @@ function startBot(config, crew = null) {
     return { bot, ctx };
 }
 
-module.exports = { startBot };
+module.exports = { startBot, pickVersion };
