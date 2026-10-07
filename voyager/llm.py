@@ -1,9 +1,11 @@
 """Chat models and embeddings for Voyager's agents.
 
 Replaces the old langchain/OpenAI-only layer with a small wrapper that talks to
-either Anthropic (Claude) or OpenAI through their official SDKs. The provider
-is picked from the model name ("claude-..." means Anthropic) unless set
-explicitly.
+Anthropic (Claude) or OpenAI through their official SDKs, or to models running
+on your own machine with Ollama. The provider is picked from the model name
+unless set explicitly: "claude-..." is Anthropic, "ollama/<model>" is Ollama,
+anything else is OpenAI (or any OpenAI-compatible server set with
+OPENAI_BASE_URL, such as LM Studio, llama.cpp or vLLM).
 """
 
 from __future__ import annotations
@@ -12,11 +14,17 @@ import hashlib
 import math
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import List, Optional, Sequence
 
 DEFAULT_MODEL = "claude-opus-5-5"
 DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_OLLAMA_EMBEDDING_MODEL = "nomic-embed-text"
+# Voyager's prompts (skill code, observations, critiques) run to several
+# thousand tokens; Ollama's default context window would silently cut them off.
+DEFAULT_LOCAL_CONTEXT_LENGTH = 32768
+OLLAMA_PREFIX = "ollama/"
 
 
 @dataclass
@@ -42,21 +50,64 @@ class RefusalError(RuntimeError):
 
 
 def infer_provider(model_name: str) -> str:
+    if model_name.startswith(OLLAMA_PREFIX):
+        return "ollama"
     return "anthropic" if model_name.startswith("claude") else "openai"
+
+
+def ollama_url(path: str) -> str:
+    host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    if not host.startswith(("http://", "https://")):
+        host = "http://" + host
+    return host + path
+
+
+def ollama_post(path: str, payload: dict, timeout: float, retries: int = 3):
+    """POST to the local Ollama server, with clear errors for common setups."""
+    import requests
+
+    for attempt in range(retries + 1):
+        try:
+            res = requests.post(ollama_url(path), json=payload, timeout=timeout)
+        except requests.ConnectionError:
+            if attempt == retries:
+                raise RuntimeError(
+                    f"Cannot reach Ollama at {ollama_url('')}. Start it with "
+                    "`ollama serve` (or the Ollama app), or set OLLAMA_HOST."
+                )
+            time.sleep(2 ** attempt)
+            continue
+        if res.status_code == 404:
+            raise RuntimeError(
+                f"Ollama has no model '{payload.get('model')}'. "
+                f"Download it with: ollama pull {payload.get('model')}"
+            )
+        if res.status_code >= 500 and attempt < retries:
+            time.sleep(2 ** attempt)
+            continue
+        if res.status_code != 200:
+            raise RuntimeError(f"Ollama error {res.status_code}: {res.text[:500]}")
+        return res.json()
+
+
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 class ChatModel:
     """A chat model callable as ``llm(messages) -> AIMessage``.
 
-    :param model_name: e.g. "claude-opus-5-5", or an OpenAI chat model
+    :param model_name: e.g. "claude-opus-5-5", "ollama/qwen2.5-coder:32b", or
+    an OpenAI chat model
     :param temperature: sampling temperature; ignored for current Claude
     models, which do not accept it
     :param effort: "low" | "medium" | "high" | "xhigh" | "max"; how much the
     model thinks before answering (Claude effort / OpenAI reasoning_effort)
     :param request_timeout: seconds per request
-    :param provider: "anthropic" or "openai"; inferred from model_name if None
+    :param provider: "anthropic", "openai" or "ollama"; inferred from
+    model_name if None
     :param max_tokens: output token cap
     :param max_retries: SDK retries for rate limits, overload and network errors
+    :param context_length: context window to request from Ollama
     """
 
     def __init__(
@@ -68,8 +119,13 @@ class ChatModel:
         provider: Optional[str] = None,
         max_tokens: int = 16000,
         max_retries: int = 4,
+        context_length: Optional[int] = None,
     ):
         self.model_name = model_name
+        self.request_timeout = request_timeout
+        self.context_length = context_length or int(
+            os.environ.get("VOYAGER_LLM_CONTEXT_LENGTH", DEFAULT_LOCAL_CONTEXT_LENGTH)
+        )
         self.temperature = temperature
         self.effort = effort
         self.max_tokens = max_tokens
@@ -86,13 +142,48 @@ class ChatModel:
             self.client = openai.OpenAI(
                 timeout=request_timeout, max_retries=max_retries
             )
+            # LM Studio, llama.cpp, vLLM, ... behind OPENAI_BASE_URL
+            self.openai_compatible = "api.openai.com" not in str(self.client.base_url)
+        elif self.provider == "ollama":
+            self.client = None
         else:
             raise ValueError(f"Unknown LLM provider: {self.provider}")
 
     def __call__(self, messages: Sequence[Message]) -> Message:
         if self.provider == "anthropic":
             return AIMessage(self._call_anthropic(messages))
+        if self.provider == "ollama":
+            return AIMessage(self._call_ollama(messages))
         return AIMessage(self._call_openai(messages))
+
+    def _call_ollama(self, messages: Sequence[Message]) -> str:
+        model = self.model_name[len(OLLAMA_PREFIX):] if self.model_name.startswith(
+            OLLAMA_PREFIX
+        ) else self.model_name
+        response = ollama_post(
+            "/api/chat",
+            {
+                "model": model,
+                "messages": [{"role": m.role, "content": m.content} for m in messages],
+                "stream": False,
+                "options": {
+                    "num_ctx": self.context_length,
+                    "temperature": 0 if self.temperature is None else self.temperature,
+                    "num_predict": min(self.max_tokens, self.context_length),
+                },
+            },
+            # local generation can be slow, especially without a GPU
+            timeout=max(self.request_timeout, 900),
+        )
+        prompt_tokens = response.get("prompt_eval_count") or 0
+        if prompt_tokens >= self.context_length - 64:
+            print(
+                f"\033[31mWarning: the prompt filled {model}'s {self.context_length}-token "
+                "context and may have been cut off; raise llm_context_length.\033[0m"
+            )
+        content = response.get("message", {}).get("content", "")
+        # reasoning models without separate thinking output put it inline
+        return _THINK_BLOCK.sub("", content).strip()
 
     def _call_anthropic(self, messages: Sequence[Message]) -> str:
         system = "\n\n".join(m.content for m in messages if m.role == "system")
@@ -131,21 +222,28 @@ class ChatModel:
         kwargs = {}
         if self.temperature is not None:
             kwargs["temperature"] = self.temperature
-        if self.effort:
-            kwargs["reasoning_effort"] = self.effort
+        if self.openai_compatible:
+            # local servers implement the older parameter names only
+            kwargs["max_tokens"] = self.max_tokens
+        else:
+            kwargs["max_completion_tokens"] = self.max_tokens
+            if self.effort:
+                kwargs["reasoning_effort"] = self.effort
         response = self.client.chat.completions.create(
             model=self.model_name,
             messages=[{"role": m.role, "content": m.content} for m in messages],
-            max_completion_tokens=self.max_tokens,
             **kwargs,
         )
-        return response.choices[0].message.content or ""
+        content = response.choices[0].message.content or ""
+        return _THINK_BLOCK.sub("", content).strip() if self.openai_compatible else content
 
 
 class Embeddings:
     """Text embeddings for skill and question retrieval.
 
-    provider "openai" uses the OpenAI embeddings API. provider "local" uses a
+    provider "openai" uses the OpenAI embeddings API. provider "ollama" uses an
+    embedding model running in Ollama (default nomic-embed-text; download it
+    with `ollama pull nomic-embed-text`). provider "local" uses a
     hashed bag-of-words vector that needs no API: it only matches shared words,
     so retrieval is weaker, but it lets Voyager run with just an Anthropic key.
     provider "auto" picks "openai" when OPENAI_API_KEY is set, else "local".
@@ -160,6 +258,8 @@ class Embeddings:
 
             self.client = openai.OpenAI()
             self.model_name = model_name or DEFAULT_OPENAI_EMBEDDING_MODEL
+        elif provider == "ollama":
+            self.model_name = model_name or DEFAULT_OLLAMA_EMBEDDING_MODEL
         elif provider == "local":
             self.model_name = "local-hash-v1"
         else:
@@ -175,6 +275,16 @@ class Embeddings:
                     model=self.model_name, input=texts[i : i + 256]
                 )
                 vectors.extend(d.embedding for d in res.data)
+            return vectors
+        if self.provider == "ollama":
+            vectors = []
+            for i in range(0, len(texts), 64):
+                res = ollama_post(
+                    "/api/embed",
+                    {"model": self.model_name, "input": texts[i : i + 64]},
+                    timeout=600,
+                )
+                vectors.extend(res["embeddings"])
             return vectors
         return [_hash_embedding(t) for t in texts]
 

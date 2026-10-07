@@ -12,7 +12,7 @@ from .agents import CriticAgent
 from .agents import CurriculumAgent
 from .agents import LessonMemory
 from .agents import SkillManager
-from .llm import DEFAULT_MODEL, Embeddings
+from .llm import DEFAULT_MODEL, OLLAMA_PREFIX, Embeddings
 
 
 # TODO: remove event memory
@@ -33,20 +33,24 @@ class Voyager:
         anthropic_api_key: str = None,
         openai_api_key: str = None,
         embedding_provider: str = "auto",
+        embedding_model: str = None,
+        local_model: str = None,
+        llm_context_length: int = None,
+        openai_base_url: str = None,
         env_wait_ticks: int = 20,
         env_request_timeout: int = 600,
         max_iterations: int = 160,
         reset_placed_if_failed: bool = False,
-        action_agent_model_name: str = DEFAULT_MODEL,
+        action_agent_model_name: str = None,
         action_agent_temperature: float = None,
         action_agent_effort: str = "high",
         action_agent_task_max_retries: int = 4,
         action_agent_show_chat_log: bool = True,
         action_agent_show_execution_error: bool = True,
-        curriculum_agent_model_name: str = DEFAULT_MODEL,
+        curriculum_agent_model_name: str = None,
         curriculum_agent_temperature: float = None,
         curriculum_agent_effort: str = "medium",
-        curriculum_agent_qa_model_name: str = DEFAULT_MODEL,
+        curriculum_agent_qa_model_name: str = None,
         curriculum_agent_qa_temperature: float = None,
         curriculum_agent_qa_effort: str = "low",
         curriculum_agent_warm_up: Dict[str, int] = None,
@@ -54,11 +58,11 @@ class Voyager:
         r"|cobblestone|dirt|coal|.*_pickaxe|.*_sword|.*_axe",
         curriculum_agent_mode: str = "auto",
         curriculum_agent_retry_failed_after: int = 10,
-        critic_agent_model_name: str = DEFAULT_MODEL,
+        critic_agent_model_name: str = None,
         critic_agent_temperature: float = None,
         critic_agent_effort: str = "medium",
         critic_agent_mode: str = "auto",
-        skill_manager_model_name: str = DEFAULT_MODEL,
+        skill_manager_model_name: str = None,
         skill_manager_temperature: float = None,
         skill_manager_retrieval_top_k: int = 5,
         lesson_memory: bool = True,
@@ -94,8 +98,19 @@ class Voyager:
         :param server_port: mineflayer port
         :param anthropic_api_key: Anthropic API key; defaults to ANTHROPIC_API_KEY
         :param openai_api_key: OpenAI API key; defaults to OPENAI_API_KEY
-        :param embedding_provider: "openai", "local" or "auto" (openai when an
-        OpenAI key is available) for skill and question retrieval
+        :param embedding_provider: "openai", "ollama", "local" or "auto" for
+        skill and question retrieval. "auto" picks ollama when embedding_model is
+        set together with local_model, the free local index when running
+        local_model, else openai when an OpenAI key is available
+        :param embedding_model: embedding model name, e.g. "nomic-embed-text"
+        :param local_model: run every agent on this Ollama model on your own
+        machine (no API costs), e.g. "qwen2.5-coder:32b"; agents whose
+        *_model_name you set explicitly keep that model. Any model name can
+        also be given as "ollama/<model>"
+        :param llm_context_length: context window requested from Ollama
+        (default 32768)
+        :param openai_base_url: use an OpenAI-compatible server instead of
+        OpenAI, e.g. LM Studio at "http://localhost:1234/v1"
         Model names starting with "claude" use Anthropic; others use OpenAI.
         Effort ("low" to "max") sets how much each model thinks before answering.
         :param env_wait_ticks: how many ticks at the end each step will wait, if you found some chat log missing,
@@ -172,8 +187,28 @@ class Voyager:
             os.environ["ANTHROPIC_API_KEY"] = anthropic_api_key
         if openai_api_key:
             os.environ["OPENAI_API_KEY"] = openai_api_key
+        if openai_base_url:
+            os.environ["OPENAI_BASE_URL"] = openai_base_url
+            # local servers ignore the key, but the SDK requires one
+            os.environ.setdefault("OPENAI_API_KEY", "local")
+        if llm_context_length:
+            os.environ["VOYAGER_LLM_CONTEXT_LENGTH"] = str(llm_context_length)
+
+        default_model = f"{OLLAMA_PREFIX}{local_model}" if local_model else DEFAULT_MODEL
+        action_agent_model_name = action_agent_model_name or default_model
+        curriculum_agent_model_name = curriculum_agent_model_name or default_model
+        curriculum_agent_qa_model_name = curriculum_agent_qa_model_name or default_model
+        critic_agent_model_name = critic_agent_model_name or default_model
+        skill_manager_model_name = skill_manager_model_name or default_model
+        if embedding_provider == "auto" and (local_model or openai_base_url):
+            # don't send embeddings to a paid API in local mode
+            embedding_provider = "ollama" if embedding_model and local_model else "local"
+        print(
+            f"\033[33mModels: action {action_agent_model_name}, curriculum "
+            f"{curriculum_agent_model_name}, critic {critic_agent_model_name}\033[0m"
+        )
         request_timeout = openai_api_request_timeout or llm_request_timeout
-        embeddings = Embeddings(provider=embedding_provider)
+        embeddings = Embeddings(provider=embedding_provider, model_name=embedding_model)
         print(f"\033[33mUsing {embeddings.model_name} embeddings for retrieval\033[0m")
 
         # init agents

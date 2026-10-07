@@ -425,5 +425,132 @@ class TestNormalPlayerMode(LLMTestCase):
             self.assertEqual([op["name"] for op in json.load(f)], ["me"])
 
 
+class FakeOllama:
+    """A minimal Ollama HTTP server answering with FakeLLM's canned replies."""
+
+    def __init__(self):
+        import http.server
+        import threading
+
+        self.llm = FakeLLM()
+        self.requests = []
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                outer.requests.append((self.path, body))
+                if body["model"] == "missing":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                if self.path == "/api/chat":
+                    messages = [llm.Message(m["role"], m["content"]) for m in body["messages"]]
+                    text = outer.llm(None, messages)
+                    reply = {
+                        "message": {"role": "assistant", "content": "<think>hmm</think>" + text},
+                        "prompt_eval_count": 100,
+                        "done": True,
+                    }
+                else:
+                    reply = {"embeddings": Embeddings("local").embed(body["input"])}
+                data = json.dumps(reply).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.host = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def close(self):
+        self.server.shutdown()
+
+
+class TestLocalModels(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.ollama = FakeOllama()
+        env = mock.patch.dict(os.environ, {"OLLAMA_HOST": self.ollama.host})
+        env.start()
+        self.addCleanup(env.stop)
+        self.addCleanup(self.ollama.close)
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    def test_learn_loop_runs_entirely_on_ollama(self):
+        from voyager import Voyager
+
+        voyager = Voyager(
+            mc_port=25565,
+            local_model="test-model",
+            embedding_model="test-embed",
+            ckpt_dir=self.tmp,
+            max_iterations=3,
+        )
+        voyager.env = FakeEnv()
+        self.ollama.llm.critic_replies = [
+            json.dumps({"reasoning": "r", "success": True, "critique": ""}),
+            json.dumps({"reasoning": "r", "success": False, "critique": "Craft planks first."}),
+            json.dumps({"reasoning": "r", "success": True, "critique": ""}),
+        ]
+        result = voyager.learn()
+        self.assertEqual(result["completed_tasks"], ["Mine 1 wood log", "Craft 1 crafting table"])
+        chats = [b for path, b in self.ollama.requests if path == "/api/chat"]
+        embeds = [b for path, b in self.ollama.requests if path == "/api/embed"]
+        self.assertTrue(chats and embeds)
+        self.assertEqual({b["model"] for b in chats}, {"test-model"})
+        self.assertEqual({b["model"] for b in embeds}, {"test-embed"})
+        for body in chats:
+            self.assertFalse(body["stream"])
+            self.assertEqual(body["options"]["num_ctx"], 32768)
+            self.assertEqual(body["options"]["temperature"], 0)
+
+    def test_explicit_agent_model_overrides_local_model(self):
+        from voyager import Voyager
+
+        voyager = Voyager(
+            mc_port=25565,
+            local_model="test-model",
+            action_agent_model_name="claude-opus-5-5",
+            ckpt_dir=self.tmp,
+        )
+        self.assertEqual(voyager.action_agent.llm.provider, "anthropic")
+        self.assertEqual(voyager.critic_agent.llm.provider, "ollama")
+        self.assertEqual(voyager.skill_manager.vectordb.embeddings.provider, "local")
+
+    def test_strips_inline_thinking_and_reports_missing_model(self):
+        model = ChatModel("ollama/test-model", context_length=4096)
+        self.assertNotIn("<think>", model([SystemMessage("x"), HumanMessage("y")]).content)
+        self.assertEqual(self.ollama.requests[-1][1]["options"]["num_ctx"], 4096)
+        with self.assertRaisesRegex(RuntimeError, "ollama pull missing"):
+            ChatModel("ollama/missing")([HumanMessage("y")])
+
+    def test_unreachable_ollama_explains_how_to_start_it(self):
+        with mock.patch.dict(os.environ, {"OLLAMA_HOST": "http://127.0.0.1:9"}), \
+                mock.patch("time.sleep"):
+            with self.assertRaisesRegex(RuntimeError, "ollama serve"):
+                ChatModel("ollama/test-model")([HumanMessage("y")])
+
+    def test_openai_compatible_server_uses_plain_parameters(self):
+        with mock.patch.dict(os.environ, {"OPENAI_BASE_URL": "http://localhost:1234/v1",
+                                          "OPENAI_API_KEY": "local"}):
+            model = ChatModel("some-local-model", effort="high")
+        self.assertTrue(model.openai_compatible)
+        model.client = mock.Mock()
+        model.client.chat.completions.create.return_value = mock.Mock(
+            choices=[mock.Mock(message=mock.Mock(content="<think>x</think>ok"))]
+        )
+        self.assertEqual(model([HumanMessage("q")]).content, "ok")
+        kwargs = model.client.chat.completions.create.call_args.kwargs
+        self.assertIn("max_tokens", kwargs)
+        self.assertNotIn("reasoning_effort", kwargs)
+        self.assertNotIn("max_completion_tokens", kwargs)
+
+
 if __name__ == "__main__":
     unittest.main()

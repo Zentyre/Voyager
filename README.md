@@ -70,7 +70,7 @@ This patches the installed packages with the open, unmerged upstream PrismarineJ
 The simplest setup lets Voyager download and run a vanilla Minecraft server for you; it needs Java 25 for Minecraft 26.1. No mods are needed. You can also connect to a world you opened to LAN or to your own server. See [Minecraft Setup](installation/minecraft_instance_install.md) for all options.
 
 # Getting Started
-Voyager uses Claude by default. You need an [Anthropic API key](https://console.anthropic.com/) (set `ANTHROPIC_API_KEY` or pass `anthropic_api_key`). OpenAI models work too: pass an OpenAI model name for any agent along with `openai_api_key`.
+Voyager uses Claude by default. You need an [Anthropic API key](https://console.anthropic.com/) (set `ANTHROPIC_API_KEY` or pass `anthropic_api_key`). OpenAI models work too: pass an OpenAI model name for any agent along with `openai_api_key`. To avoid API costs entirely, [run the models locally](#running-models-locally-no-api-costs).
 
 ```python
 from voyager import Voyager
@@ -105,6 +105,29 @@ voyager = Voyager(
 ```
 
 Claude requests opt into Anthropic's server-side fallback: if a safety classifier declines a request, it is retried on a fallback model instead of failing.
+
+### Running models locally (no API costs)
+Voyager can run every model on your own computer with [Ollama](https://ollama.com), so learning costs nothing per token. Install Ollama, download a model, and pass `local_model`:
+
+```bash
+ollama pull qwen2.5-coder:32b      # the model that plays
+ollama pull nomic-embed-text       # optional: better skill search
+```
+```python
+voyager = Voyager(
+    minecraft_server={"version": "26.1", "accept_eula": True},
+    local_model="qwen2.5-coder:32b",
+    embedding_model="nomic-embed-text",  # leave out to use the built-in keyword index
+)
+```
+
+No API key is needed. Things to know:
+- **Model quality matters more than anything else.** The action agent has to write working Mineflayer JavaScript, and the original paper found that weaker models learn far fewer skills. Use the strongest coding model your hardware can run; `qwen2.5-coder:32b` is one example, and newer or larger models do better. Expect slower progress and more failed tasks than with Claude.
+- **Hardware.** A 32B model needs roughly 20–24 GB of GPU memory (or a lot of RAM and patience on CPU). 14B models need about 10 GB, and 7–8B models about 6 GB, but those small models struggle with this task.
+- **Context window.** Voyager requests a 32768-token context from Ollama on every call, because its prompts are long and Ollama's default window would silently cut them off. Change it with `llm_context_length` if your model or memory needs a different size. Voyager warns you if a prompt filled the whole window.
+- **Mixing local and paid models.** Any agent's model can be set separately, and an explicit `*_model_name` overrides `local_model`. For example, `local_model="qwen2.5-coder:32b", action_agent_model_name="claude-opus-5-5"` pays only for the code-writing agent and runs everything else locally.
+- **Other local servers.** LM Studio, llama.cpp and vLLM work through their OpenAI-compatible endpoint: `openai_base_url="http://localhost:1234/v1"` and `action_agent_model_name="<model name in that server>"` (and likewise for the other agents).
+- **Ollama on another machine:** set `OLLAMA_HOST`, e.g. `OLLAMA_HOST=http://192.168.1.20:11434`.
 
 ### Skill retrieval
 Skills and cached questions are retrieved by embedding similarity. With an OpenAI key, Voyager uses OpenAI's `text-embedding-3-small`; without one it falls back to a local keyword-based index, so Voyager runs with only an Anthropic key. Choose explicitly with `embedding_provider="openai"` or `"local"`. The index is rebuilt automatically from `skills.json` when the embedding model changes, so the bundled skill libraries load either way.
@@ -144,6 +167,7 @@ What changes with `cheats=False`:
   - *Proven skills rank higher.* Each skill counts how often later skills build on it, and retrieval favors skills that have been reused.
   - *A better-informed critic.* The critic also sees the bot's chat log, so it can verify tasks that leave no trace in the inventory, such as killing a mob.
   - *Version awareness.* The agents are told which Minecraft version they are playing, so they only suggest blocks and items that exist in it.
+- **Local models:** `local_model="..."` runs every agent on your own machine with Ollama, so there are no API costs; OpenAI-compatible local servers work too.
 - **Normal-player mode:** `cheats=False` plays without operator commands, and `bot_auth="microsoft"` lets the bot join online-mode servers with its own account.
 
 # Resume from a checkpoint during learning

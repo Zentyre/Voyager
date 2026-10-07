@@ -5,6 +5,7 @@
 * [I saw the bot left and rejoin the game after each task.](#i-saw-the-bot-left-and-rejoin-the-game-after-each-task)
 * [How to show the bot's first-person perspective?](#how-to-show-the-bots-first-person-view)
 * [Can I use a cheaper model?](#can-i-use-a-cheaper-model)
+* [Can I run Voyager without paying for an API?](#can-i-run-voyager-without-paying-for-an-api)
 * [What's the estimated cost of running Voyager?](#whats-the-estimated-cost-of-running-voyager)
 
 ## I got a connection error after I click on the Azure login link and login to my Microsoft account.
@@ -48,6 +49,10 @@ Due to the Mineflayer's limitation, we currently can not directly get the bot's 
 ## Can I use a cheaper model?
 
 Yes: set the `*_model_name` arguments, e.g. `claude-sonnet-5-5` or an OpenAI model, or lower the `*_effort` arguments. The action agent, which writes the code, benefits most from a strong model, so if you economize, start with the curriculum QA and skill manager models.
+
+## Can I run Voyager without paying for an API?
+
+Yes: run the models locally with Ollama, e.g. `Voyager(..., local_model="qwen2.5-coder:32b")`. See [Running models locally](README.md#running-models-locally-no-api-costs). Local models are free to run but learn more slowly than large hosted models.
 
 ## What's the estimated cost of running Voyager?
 
