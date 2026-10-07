@@ -30,7 +30,6 @@
     "guardRadius": 12,
     "followDistance": 3,
     "guardAgainstPlayers": false,
-    "keepAnimals": 2,
     "autoSleep": true,
     "bringBed": false,
 

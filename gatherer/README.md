@@ -172,7 +172,7 @@ coordinate. Each keeps its own memory file (`memory/<username>.json`) either way
 | **Brew**   | Fills water bottles and runs them through a brewing stand: water → awkward → healing, swiftness, night vision, etc. Can make them long, strong or splash. |
 | **Sleep**  | Sleeps in a nearby bed at night or in thunderstorms. `!sleep` makes and places a bed if needed (wool from sheep + planks). |
 | **Water**  | Makes a bucket, fills it, and places water: for new farms, or under itself to put out fire. |
-| **Hunt**   | Items that come from mobs (leather, beef, wool, feathers, string, bones…). Animals always get critical hits (it stops sprinting, jumps, and hits on the way down). It always leaves `keepAnimals` adults of each farm animal alive. It skips babies (no drops) and anything with a name tag. It never hunts pets, horses, villagers, golems or creepers. |
+| **Hunt**   | Items that come from mobs (leather, beef, wool, feathers, string, bones…). Animals always get critical hits (it stops sprinting, jumps, and hits on the way down). It skips babies (no drops) and anything with a name tag. It never hunts pets, horses, villagers, golems or creepers. |
 | **Armor**  | Wears the best armor it carries (leather → gold → chainmail → iron → diamond → netherite) and a shield in its off-hand. Upgrades as soon as it picks up something better. |
 | **Fight**  | Fights hostile mobs that come within `defendRadius`, dealing with creepers and archers first. It times swings to the weapon's cooldown and picks its weapon by damage per second. It can land critical hits (jump and strike while falling) and blocks arrows with a shield while closing in. It backs off to eat (golden apples first) when health drops to `fleeHealth`. It runs from creepers and wardens and leaves endermen and piglins alone. |
 | **Bow**    | Shoots with a bow when it has one and arrows: always for creepers (before they get close) and for anything more than 10 blocks away, otherwise when the learner rates it best. It works out the arc from arrow speed, drag and gravity, and leads moving targets. It keeps 7–24 blocks away and switches to its sword if something closes within 4. It walks closer when a wall blocks the shot, and picks its arrows back up afterwards. `!bow` makes a bow and arrows (string from spiders, arrows from skeletons or flint + feathers). |
@@ -270,7 +270,6 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `protectRadius`      | `0`           | Never dig within this many blocks of the spawn point or chest     |
 | `extraMineable`      | `[]`          | Extra block names it may mine besides natural ones                |
 | `hunt`               | `true`        | Allow hunting mobs for drops and food                             |
-| `keepAnimals`        | `2`           | Never hunt the last this-many adults of a farm animal nearby      |
 | `defend`             | `true`        | Fight back against hostile mobs                                   |
 | `defendRadius`       | `8`           | How close a hostile mob must be before it reacts                  |
 | `fleeHealth`         | `6`           | Back off and eat at or below this health (of 20)                  |
@@ -307,7 +306,7 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
   Set `protectRadius` to keep it away from your base.
 - When the pathfinder digs its way somewhere, it never breaks farmland,
   crops, chests, furnaces, crafting tables, beds, doors, glass or torches.
-- It leaves `keepAnimals` adults of each kind and skips name-tagged animals.
+- It skips name-tagged animals (pets) and babies.
   It still can't tell your pens from wild herds, so turn `hunt` off if that matters.
 - **Brewing needs Nether items.** Nether wart and blaze powder only come from the
   Nether, which the bot doesn't visit. Give it those and it handles the rest

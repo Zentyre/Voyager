@@ -36,11 +36,9 @@ function installAnimals(ctx) {
         ).length;
     }
 
-    // Can this animal be hunted without wiping out the local herd?
+    // Babies drop nothing; a name tag means it's someone's pet.
     function huntable(entity) {
-        if (isBaby(entity) || isNamed(entity)) return false;
-        if (!kb.BREED_FOOD[entity.name]) return true; // hostile mobs etc.
-        return adults(entity.name).length > config.keepAnimals;
+        return !isBaby(entity) && !isNamed(entity);
     }
 
     async function feed(entity, foodName) {

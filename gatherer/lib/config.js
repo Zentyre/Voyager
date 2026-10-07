@@ -37,7 +37,6 @@ const DEFAULTS = {
     farmSize: 9,
     farmWaitMinutes: 30,
     placeWater: true,
-    keepAnimals: 2,
     autoSleep: true,
     bringBed: false,
     learn: true,

@@ -155,7 +155,7 @@ function installActions(ctx) {
         await bot.tool.equipForBlock(target, { requireHarvest: true });
         if (!target.canHarvest(bot.heldItem?.type ?? null)) throw new Error("no tool that can harvest it");
         await digBlock(target);
-        await pickUpDrops(block.position);
+        await collectDropsAt(block.position);
     }
 
     // mineflayer marks a block as broken the moment its own timer runs out. The
@@ -266,7 +266,7 @@ function installActions(ctx) {
         } finally {
             await climbDown(pillar).catch(() => {});
         }
-        await pickUpDrops(p);
+        await collectDropsAt(p);
     }
 
     async function buildUp(block, reach, pillar) {
@@ -386,7 +386,7 @@ function installActions(ctx) {
         });
     }
 
-    async function pickUpDrops(pos) {
+    async function collectDropsAt(pos) {
         const deadline = Date.now() + 8000;
         await ctx.wait(400); // let the drop spawn and land
         while (Date.now() < deadline) {
@@ -397,14 +397,38 @@ function installActions(ctx) {
                 .filter((e) => e.name === "item" && e.isValid !== false && Math.hypot(e.position.x - pos.x - 0.5, e.position.z - pos.z - 0.5) < 5 && Math.abs(e.position.y - pos.y) < 12)
                 .sort((a, b) => a.position.distanceTo(me) - b.position.distanceTo(me))[0];
             if (!drop) return;
-            const p = drop.position;
+            if (!(await walkOver(drop, deadline - Date.now()))) return; // can't get to it
+        }
+    }
+
+    // Get onto a dropped item so the server hands it over: path to its block,
+    // then step straight at it (being "within a block" can be just too far).
+    // Returns false if it couldn't get there.
+    async function walkOver(drop, ms = 8000) {
+        const deadline = Date.now() + Math.max(1000, ms);
+        const p = drop.position;
+        const goal = new goals.GoalNear(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z), 0);
+        try {
+            await ctx.withTimeout(bot.pathfinder.goto(goal), Math.max(500, deadline - Date.now()));
+        } catch (err) {
             try {
                 await ctx.withTimeout(bot.pathfinder.goto(new goals.GoalNear(p.x, p.y, p.z, 1)), Math.max(500, deadline - Date.now()));
-            } catch (err) {
-                return; // can't get to it
+            } catch (err2) {
+                return false;
             }
-            await ctx.wait(300);
         }
+        const flat = () => Math.hypot(drop.position.x - bot.entity.position.x, drop.position.z - bot.entity.position.z);
+        if (drop.isValid && bot.entities[drop.id] && flat() > 0.4) {
+            try {
+                await bot.lookAt(drop.position.offset(0, bot.entity.height ?? 1.62, 0), true);
+                bot.setControlState("forward", true);
+                await waitUntil(() => !bot.entities[drop.id] || flat() < 0.4, 1500);
+            } finally {
+                bot.setControlState("forward", false);
+            }
+        }
+        await ctx.wait(250);
+        return true;
     }
 
     function isProtected(pos) {
@@ -668,7 +692,7 @@ function installActions(ctx) {
             }
             if (!mob) {
                 if (++exploreAttempts > config.maxExploreAttempts) {
-                    throw new Error(`couldn't find any ${mobs.join("/")} nearby (I leave ${config.keepAnimals} of each kind to breed)`);
+                    throw new Error(`couldn't find any ${mobs.join("/")} nearby`);
                 }
                 ctx.log(`No ${mobs.join("/")} I can hunt in range, exploring (${exploreAttempts}/${config.maxExploreAttempts}).`);
                 lastExplore = await exploreAndReplan(seen, "mob", mobs);
@@ -706,8 +730,8 @@ function installActions(ctx) {
             .filter((e) => !name || e.getDroppedItem?.()?.name === name)
             .sort((a, b) => a.position.distanceTo(pos) - b.position.distanceTo(pos));
         for (const drop of drops) {
-            if (!drop.isValid) continue;
-            await ctx.safely(() => ctx.withTimeout(ctx.goTo(drop.position, 1), 8000));
+            if (!drop.isValid || !bot.entities[drop.id]) continue;
+            await ctx.safely(() => walkOver(drop));
         }
     }
 
