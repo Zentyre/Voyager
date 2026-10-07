@@ -134,8 +134,8 @@ function createBot(config, crew) {
         const modded = bot.registry.blocksByName.modded_block;
         if (modded) movements.blocksCantBreak.add(modded.id);
         bot.pathfinder.setMovements(movements);
-        bot.pathfinder.thinkTimeout = 5000;
-        bot.pathfinder.tickTimeout = 20;
+        bot.pathfinder.thinkTimeout = 10000;
+        bot.pathfinder.tickTimeout = 30;
         bot.collectBlock.movements = movements;
         // We handle chest deposits ourselves so progress stays accurate.
         bot.collectBlock.chestLocations = [];
@@ -148,9 +148,22 @@ function createBot(config, crew) {
         else if (!crew) log(`Nothing queued. Say '${config.commandPrefix}get <item> [count]' in chat.`);
     });
 
+    // The death message ("... was slain by Zombie") comes in its own packet.
+    let deathMessage = null;
+    bot._client.on("death_combat_event", (packet) => {
+        if (packet.playerId !== bot.entity?.id) return;
+        try {
+            deathMessage = require("prismarine-chat")(bot.registry).fromNotch(packet.message).toString();
+        } catch (err) {
+            deathMessage = null;
+        }
+    });
     bot.on("death", () => {
-        log("Died. Will carry on after respawning.");
         ctx.stopCurrentAction();
+        setTimeout(() => {
+            log(`Died${deathMessage ? ` (${deathMessage})` : ""}. Will carry on after respawning.`);
+            deathMessage = null;
+        }, 300);
     });
 
     bot.on("wake", () => log("Woke up."));

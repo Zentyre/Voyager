@@ -220,22 +220,56 @@ function patchBot(bot) {
     // the rest carry on.
     const originalEmit = client.emit.bind(client);
     const reported = new Set();
+    const report = (packetName, err) => {
+        const key = `${packetName} ${err.message}`;
+        if (reported.has(key)) return;
+        reported.add(key);
+        const where = (err.stack || "").split("\n").slice(1, 6).join("\n");
+        console.log(`[${bot.username}] Error handling the server's ${packetName} packet (ignored): ${err.message}\n${where}`);
+    };
+    const isPacket = (meta) => meta && typeof meta === "object" && typeof meta.name === "string";
     const emit = (event, packet, meta, ...rest) => {
-        if (!meta || typeof meta !== "object" || typeof meta.name !== "string") return originalEmit(event, packet, meta, ...rest);
+        if (!isPacket(meta)) return originalEmit(event, packet, meta, ...rest);
         const listeners = client.rawListeners(event);
         for (const listener of listeners) {
             try {
                 listener.call(client, packet, meta, ...rest);
             } catch (err) {
-                const key = `${meta.name} ${err.message}`;
-                if (reported.has(key)) continue;
-                reported.add(key);
-                const where = (err.stack || "").split("\n").slice(1, 6).join("\n");
-                console.log(`[${bot.username}] Error handling the server's ${meta.name} packet (ignored): ${err.message}\n${where}`);
+                report(meta.name, err);
             }
         }
         return listeners.length > 0;
     };
+
+    // If the server seems to go quiet, these say whether packets stopped
+    // arriving or arrived but couldn't be read, and whether the bot froze.
+    const received = []; // recent packets from the server
+    let lastPacketAt = Date.now();
+    let bytesAtLastPacket = 0;
+    const notePacket = (name) => {
+        lastPacketAt = Date.now();
+        bytesAtLastPacket = client.socket?.bytesRead ?? 0;
+        received.push(`${new Date(lastPacketAt).toISOString().slice(11, 23)} ${name}`);
+        if (received.length > 15) received.shift();
+    };
+    client.on("error", (err) => {
+        if (!/timed out/.test(err.message)) return;
+        const quiet = ((Date.now() - lastPacketAt) / 1000).toFixed(1);
+        const unread = (client.socket?.bytesRead ?? 0) - bytesAtLastPacket;
+        console.log(
+            `[${bot.username}] Connection diagnostics: the last packet the bot read came ${quiet} s ago; ` +
+                `${unread} bytes arrived after it ${unread > 0 ? "that the bot could not read" : "(the server sent nothing)"}. ` +
+                `Last packets read:\n  ${received.join("\n  ")}`
+        );
+    });
+    let lastBeat = Date.now();
+    const heartbeat = setInterval(() => {
+        const gap = Date.now() - lastBeat;
+        if (gap > 5000) console.log(`[${bot.username}] The bot froze for ${(gap / 1000).toFixed(1)} s (busy computing).`);
+        lastBeat = Date.now();
+    }, 1000);
+    heartbeat.unref?.();
+    client.once("end", () => clearInterval(heartbeat));
     const translate = (event, packet, ...rest) => {
         if (!is26_3(bot) || !packet || typeof packet !== "object") return emit(event, packet, ...rest);
         if (/^(position|player_rotation|respawn|login|explosion|entity_velocity|entity_teleport|sync_entity_position|game_state_change|update_health|vehicle_move)$/.test(event)) {
@@ -299,7 +333,16 @@ function patchBot(bot) {
         }
         return emit(event, packet, ...rest);
     };
-    client.emit = translate;
+    client.emit = (event, packet, meta, ...rest) => {
+        if (!isPacket(meta)) return translate(event, packet, meta, ...rest);
+        if (event === meta.name) notePacket(event);
+        try {
+            return translate(event, packet, meta, ...rest);
+        } catch (err) {
+            report(meta.name, err);
+            return false;
+        }
+    };
 }
 
 // Short one-line form of a packet for the debug trace.

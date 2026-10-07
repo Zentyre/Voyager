@@ -87,7 +87,14 @@ function createContext(bot, config) {
     ctx.stopCurrentAction = () => {
         ctx.interrupts++;
         bot.pathfinder.setGoal(null);
-        bot.collectBlock.cancelTask().catch(() => {});
+        // cancelTask waits for the collection to wind down; don't stack waits
+        if (!ctx.cancelling) {
+            ctx.cancelling = true;
+            bot.collectBlock
+                .cancelTask()
+                .catch(() => {})
+                .finally(() => (ctx.cancelling = false));
+        }
         bot.clearControlStates();
     };
 

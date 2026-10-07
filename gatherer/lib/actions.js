@@ -74,6 +74,11 @@ function installActions(ctx) {
                 })
                 .filter((p) => !skipped.has(p.toString()) && !isProtected(p) && !learn.isUnreachable(p))
                 .filter((p) => !ctx.crew?.claimedByOther(`block:${p}`));
+            // Prefer blocks near our own height: the top of a tree whose trunk
+            // is gone looks close but can't be reached without building up.
+            const me = bot.entity.position;
+            const effort = (p) => p.distanceTo(me) + 3 * Math.max(0, p.y - me.y - 2);
+            positions.sort((a, b) => effort(a) - effort(b));
             if (lastExplore) {
                 learn.reward(lastExplore.context, lastExplore.arm, positions.length > 0 ? 1 : 0);
                 lastExplore = null;
