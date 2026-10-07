@@ -131,6 +131,7 @@ aside {
 @media (max-width: 900px) { aside { position: static; height: 420px; } }
 aside .head { padding: 10px 12px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
 aside .head strong { margin-right: auto; }
+aside .head button { padding: 5px 10px; font-size: 13px; }
 #log { overflow-y: auto; padding: 8px 12px; font-size: 12.5px; flex: 1; }
 #log .row { padding: 3px 0; border-bottom: 1px dashed var(--line); display: grid; grid-template-columns: auto auto 1fr; gap: 8px; }
 #log .t { color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -171,7 +172,7 @@ body.managed .power { display: inline-block; }
 <main>
   <section id="bots"><div class="empty">Waiting for bots…</div></section>
   <aside>
-    <div class="head"><strong>Activity</strong><select id="logFilter" aria-label="Show log for"><option value="">All bots</option></select></div>
+    <div class="head"><strong>Activity</strong><select id="logFilter" aria-label="Show log for"><option value="">All bots</option></select><button type="button" id="clearLog" title="Clear the activity log">Clear</button></div>
     <div id="log"></div>
   </aside>
 </main>
@@ -365,12 +366,13 @@ function logRow(entry) {
   const bad = /couldn't|error|died|kicked|disconnect|refus|won't/i.test(entry.text);
   return `<div class="row${entry.bot === "you" ? " you" : ""}${bad ? " bad" : ""}" data-bot="${esc(entry.bot)}"><span class="t">${time(entry.t)}</span><span class="b">${esc(who)}</span><span class="msg">${esc(entry.text)}</span></div>`;
 }
+// Newest first, so the latest is always at the top without scrolling.
 function renderLog() {
   const f = $("#logFilter").value;
   const rows = state.logs.filter((e) => !f || e.bot === f || e.bot === "you");
   const el = $("#log");
-  el.innerHTML = rows.map(logRow).join("");
-  el.scrollTop = el.scrollHeight;
+  el.innerHTML = rows.length ? rows.slice().reverse().map(logRow).join("") : `<div class="muted nolog">Nothing yet.</div>`;
+  el.scrollTop = 0;
 }
 function addLog(entry) {
   state.logs.push(entry);
@@ -378,12 +380,22 @@ function addLog(entry) {
   const f = $("#logFilter").value;
   if (f && entry.bot !== f && entry.bot !== "you") return;
   const el = $("#log");
-  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-  el.insertAdjacentHTML("beforeend", logRow(entry));
-  while (el.children.length > 400) el.firstChild.remove();
-  if (atBottom) el.scrollTop = el.scrollHeight;
+  $(".nolog", el)?.remove();
+  const before = el.scrollHeight;
+  el.insertAdjacentHTML("afterbegin", logRow(entry));
+  while (el.children.length > 400) el.lastChild.remove();
+  // Reading further down? Keep what you're looking at in place.
+  if (el.scrollTop > 0) el.scrollTop += el.scrollHeight - before;
 }
 $("#logFilter").addEventListener("change", renderLog);
+$("#clearLog").addEventListener("click", async () => {
+  try {
+    const res = await fetch("clear-log", { method: "POST" });
+    if (!res.ok) throw new Error(res.statusText);
+  } catch (err) {
+    toast("Couldn't clear: " + err.message);
+  }
+});
 
 // ---------- item names for the "get" boxes ----------
 async function loadItems() {
@@ -421,6 +433,10 @@ function connect() {
     if (!known || renamed) renderTargets();
   });
   es.addEventListener("log", (e) => addLog(JSON.parse(e.data)));
+  es.addEventListener("clear", () => {
+    state.logs = [];
+    renderLog();
+  });
 }
 connect();
 loadItems();

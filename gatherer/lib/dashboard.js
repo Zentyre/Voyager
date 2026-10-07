@@ -97,6 +97,12 @@ function startDashboard(options, { onCommand, onControl = null, manager = false,
             });
             return;
         }
+        if (req.method === "POST" && url.pathname === "/clear-log") {
+            logs.length = 0;
+            broadcast("clear", {});
+            res.writeHead(200, { "content-type": "application/json" });
+            return res.end('{"ok":true}');
+        }
         if (req.method === "POST" && url.pathname === "/command") {
             let body = "";
             req.on("data", (chunk) => {
