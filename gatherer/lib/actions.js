@@ -72,7 +72,8 @@ function installActions(ctx) {
                     maxDistance: config.searchRadius,
                     count: 64,
                 })
-                .filter((p) => !skipped.has(p.toString()) && !isProtected(p) && !learn.isUnreachable(p));
+                .filter((p) => !skipped.has(p.toString()) && !isProtected(p) && !learn.isUnreachable(p))
+                .filter((p) => !ctx.crew?.claimedByOther(`block:${p}`));
             if (lastExplore) {
                 learn.reward(lastExplore.context, lastExplore.arm, positions.length > 0 ? 1 : 0);
                 lastExplore = null;
@@ -89,6 +90,7 @@ function installActions(ctx) {
 
             const block = bot.blockAt(positions[0]);
             learn.remember("block", block.name, block.position, positions.length);
+            ctx.crew?.claim(`block:${block.position}`);
             const before = ctx.interrupts;
             let failure = null;
             try {
@@ -174,7 +176,10 @@ function installActions(ctx) {
             );
         };
         const safe = COMPASS.filter((arm) => learn.dangerAt(target(arm)) < 3);
-        const arm = learn.choose(context, safe.length ? safe : COMPASS);
+        // In a crew, leave directions another bot is already exploring.
+        const free = safe.filter((arm) => !ctx.crew?.claimedByOther(`explore:${context}:${arm}`));
+        const arm = learn.choose(context, free.length ? free : safe.length ? safe : COMPASS);
+        ctx.crew?.claim(`explore:${context}:${arm}`, 90000);
         const dest = target(arm);
         await ctx.safely(() =>
             ctx.withTimeout(bot.pathfinder.goto(new goals.GoalXZ(dest.x, dest.z)), 60000)
@@ -359,7 +364,12 @@ function installActions(ctx) {
             await ctx.act(() => pickUpDrops(name));
             if (ctx.countItem(name) >= target) break;
 
-            const mob = nearestEntity(mobs, config.searchRadius, gaveUpOn, ctx.huntable);
+            const mob = nearestEntity(
+                mobs,
+                config.searchRadius,
+                gaveUpOn,
+                (e) => ctx.huntable(e) && !ctx.crew?.claimedByOther(`mob:${e.id}`)
+            );
             if (lastExplore) {
                 learn.reward(lastExplore.context, lastExplore.arm, mob ? 1 : 0);
                 lastExplore = null;
@@ -374,6 +384,7 @@ function installActions(ctx) {
             }
             exploreAttempts = 0;
             learn.remember("mob", mob.name, mob.position);
+            ctx.crew?.claim(`mob:${mob.id}`, 45000);
             ctx.log(`Hunting ${mob.name} for ${name}.`);
             try {
                 await ctx.act(() => ctx.huntMob(mob));

@@ -7,8 +7,8 @@
     "owner": "Zentyre",
     "commandPrefix": "!",
 
-    "viewDistance": "tiny",
-    "searchRadius": 48,
+    "viewDistance": "normal",
+    "searchRadius": 110,
     "stationRadius": 24,
     "exploreDistance": 64,
     "maxExploreAttempts": 8,
@@ -40,7 +40,6 @@
     "placeWater": true,
 
     "learn": true,
-    "memoryFile": "memory.json",
     "memoryRange": 400,
 
     "returnHome": true,

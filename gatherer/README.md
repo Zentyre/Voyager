@@ -14,8 +14,10 @@ Mineflayer libraries as Voyager, but nothing else:
   pickaxe → furnace → raw iron → iron ingots.
 - **No Python, no bundled Minecraft launcher, no 3D viewer.** One Node process
   that joins the world you're already playing in.
-- **Light on resources.** About 150 MB RAM and under 15% of one CPU core in testing.
-  It asks the server for a "tiny" view distance and caps pathfinding time per tick.
+- **Light on resources.** About 150–300 MB RAM per bot and a fraction of a CPU
+  core. It caps pathfinding time per tick.
+- **One bot or a crew.** Run several bots that work separately or together:
+  they split jobs, share what they learn, and stay out of each other's way.
 
 ## Setup
 
@@ -42,6 +44,65 @@ node gatherer.js --config other.json torch:32
 
 Use item names as they appear in `/give`: `raw_iron`, `iron_ingot`,
 `cobblestone`, `oak_log`, `torch`, `furnace`, `leather`, `cooked_beef`, …
+
+## Crews: several bots at once
+
+List bots under `"bots"` in `config.json`. Everything else in the file is shared,
+and each entry can override any setting (its own `tasks`, `defendRadius`…). See
+`config.crew.example.json`:
+
+```json
+{
+    "host": "localhost", "port": 25565, "owner": "Zentyre",
+    "bots": [
+        { "username": "Miner" },
+        { "username": "Farmer", "tasks": [{ "item": "wheat", "count": 32 }] },
+        { "username": "Guard", "defendRadius": 12 }
+    ]
+}
+```
+
+`npm start` then launches all of them in one process. Each bot runs in its own
+worker thread, so each gets its own CPU core. Logins are spaced 3 s apart, and a
+bot that gets kicked or disconnected rejoins by itself (`"reconnect": false`
+turns that off).
+
+**Working separately:** put the bot's name after the prefix and only that bot
+listens:
+
+```
+!Miner get iron_ingot 8
+!Farmer plant wheat 16
+!Guard guard
+```
+
+**Working together:** commands without a name go to the crew:
+
+| Command | What the crew does |
+|---------|--------------------|
+| `!get <item> <count>` (also gather/craft/smelt) | Splits the count between the bots that are free (all bots if none are free). `!get oak_log 64` with two idle bots → 32 each. |
+| `!come`, `!stop`, `!quit`, `!status`, `!inv`, `!home`, `!guard`, `!eat`, `!sleep`, `!deposit`, `!give`, `!armor`, `!bow`, `!forget` | Every bot does it: e.g. `!guard` gives you a squad of bodyguards, `!give oak_log` has each bot bring you its logs. Bots with nothing to add stay quiet. |
+| `!plan`, `!farm`, `!plant`, `!breed`, `!brew`, `!water`, `!bucket`, `!learned`, `!help` | One bot does it: a free one if there is one. |
+| `!crew` | Lists the bots and whether each is idle, busy or offline. |
+| `!all <command>` | Sends any command to every bot. |
+
+While working together they:
+
+- **Share what they learn.** Places, timings, failure rates, fighting styles,
+  aim corrections, danger spots and unreachable blocks all reach every bot as
+  they happen, so iron one bot finds is known to all.
+- **Don't get in each other's way.** Each bot claims the block, crop or mob it's
+  going for, and the others pick a different one.
+- **Spread out when exploring.** Each bot takes a different direction.
+- **Leave each other alone.** Bots ignore each other's chat and never treat a
+  crewmate as an attacker.
+
+The terminal takes the same commands without the `!`: `Miner status`,
+`all come`, `get dirt 10`, `crew`.
+
+You can also run bots as completely separate processes, each with its own config
+(`node gatherer.js --config miner.json`). They then work independently and don't
+coordinate. Each keeps its own memory file (`memory/<username>.json`) either way.
 
 ## What it can do
 
@@ -115,6 +176,7 @@ without the `!`.
 | `!water`                         | Place a water source next to it               |
 | `!bucket`                        | Get a filled water bucket                     |
 | `!guard [player]`                | Bodyguard a player (you, if no name). `!stop` dismisses it. Also `!bodyguard`, `!protect` |
+| `!give [item\|all] [count]`      | Walk to you and drop items (`all` = everything except its tools, armor, weapons and arrows) |
 | `!bow [arrows]`                  | Get a bow and arrows (16 by default) to use in fights |
 | `!armor`                         | Put on the best armor it has and say what it's wearing |
 | `!armor <material>`              | Get and wear a full set: `leather`, `golden`, `iron` or `diamond` |
@@ -144,8 +206,8 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `version`            | `false`       | Minecraft version, `false` = auto-detect                          |
 | `owner`              | `"Zentyre"`   | Only take commands from this player (`null` = anyone)             |
 | `commandPrefix`      | `"!"`         | Chat commands must start with this                                |
-| `viewDistance`       | `"tiny"`      | Chunks requested from server, lower = less RAM                    |
-| `searchRadius`       | `48`          | How far (blocks) to look for resources and mobs                   |
+| `viewDistance`       | `"normal"`    | Chunks requested from the server: `tiny` 6, `short` 8, `normal` 10, `far` 12. More = sees further, more RAM. Capped by the server's own view-distance |
+| `searchRadius`       | `110`         | How far (blocks) to look for resources and mobs (keep under view distance × 16) |
 | `stationRadius`      | `24`          | Reuse a crafting table / furnace / bed within this distance       |
 | `exploreDistance`    | `64`          | How far to wander when nothing is in range                        |
 | `maxExploreAttempts` | `8`           | Give up on an item after this many fruitless wanders              |
@@ -173,12 +235,14 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `farmWaitMinutes`    | `30`          | Give up waiting for crops to grow after this long                 |
 | `placeWater`         | `true`        | Bring water in a bucket to start a farm where there's none        |
 | `learn`              | `true`        | Learn from experience and remember places                         |
-| `memoryFile`         | `"memory.json"` | Where learned data is saved                                     |
+| `memoryFile`         | `memory/<username>.json` | Where learned data is saved                            |
 | `memoryRange`        | `400`         | How far away remembered places are worth travelling to            |
 | `returnHome`         | `true`        | Walk back to the spawn point after the queue is done              |
 | `quitWhenDone`       | `false`       | Disconnect when the queue is done                                 |
 | `chatter`            | `true`        | Post progress messages in game chat                               |
 | `tasks`              | `[]`          | `[{ "item": "oak_log", "count": 32 }, …]`                         |
+| `bots`               | `[]`          | Crew members: `[{ "username": "Miner" }, …]`, each may override any setting |
+| `reconnect`          | `true`        | Crew: rejoin automatically after being kicked or disconnected     |
 
 ## Safety and limits
 
@@ -211,7 +275,11 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 
 | File                | Role                                                      |
 |---------------------|-----------------------------------------------------------|
-| `gatherer.js`       | Config, connection, task queue, commands                  |
+| `gatherer.js`       | Entry point: one bot, or a crew                           |
+| `lib/config.js`     | Defaults, config file, per-bot settings                   |
+| `lib/bot.js`        | One bot: connection, task queue, commands                 |
+| `lib/crew.js`       | Crew coordinator (main thread) and its link to each bot   |
+| `lib/crew-worker.js`| Worker-thread entry point for a crew member               |
 | `lib/knowledge.js`  | Lookup tables: drops, recipes, smelting, crops, breeding food, potions, fuel, food, mobs |
 | `lib/planner.js`    | Cost-based choice between mine / craft / smelt / farm / hunt |
 | `lib/learning.js`   | Experience statistics, place memory, bandits, danger map, saving |

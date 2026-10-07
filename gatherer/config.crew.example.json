@@ -1,0 +1,27 @@
+{
+    "host": "localhost",
+    "port": 25565,
+    "auth": "offline",
+    "owner": "Zentyre",
+    "viewDistance": "normal",
+    "searchRadius": 110,
+    "chest": null,
+    "bots": [
+        {
+            "username": "Miner"
+        },
+        {
+            "username": "Farmer",
+            "tasks": [
+                {
+                    "item": "wheat",
+                    "count": 32
+                }
+            ]
+        },
+        {
+            "username": "Guard",
+            "defendRadius": 12
+        }
+    ]
+}

@@ -12,6 +12,8 @@
 //   - Unreachable blocks: spots the pathfinder could not reach, skipped later.
 //
 // Everything is saved to a JSON file per server, so learning carries over.
+// In a crew, every update is also sent to the other bots, so they all learn
+// from each other's experience.
 
 const fs = require("fs");
 const path = require("path");
@@ -29,6 +31,7 @@ const WORTH_REMEMBERING = /_ore$|_log$|^(sand|red_sand|clay|gravel|sugar_cane|pu
 function createLearning(ctx) {
     const { bot, config } = ctx;
     const file = path.resolve(__dirname, "..", config.memoryFile);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
     const worldKey = `${config.host}:${config.port}`;
     let all = {};
     try {
@@ -59,17 +62,20 @@ function createLearning(ctx) {
             const elapsed = Date.now() - frame.start;
             if (stack.length) stack[stack.length - 1].child += elapsed;
             if (success === null || config.learn === false) return;
-            const key = `${type}:${item}`;
-            const m = (mem.methods[key] = mem.methods[key] || { n: 0, ok: 0, secondsPerUnit: null });
-            m.n++;
-            if (success) {
-                m.ok++;
-                // Only time spent on this step itself, not on its ingredients.
-                const perUnit = Math.max(0, elapsed - frame.child) / 1000 / Math.max(1, units);
-                m.secondsPerUnit = m.secondsPerUnit === null ? perUnit : m.secondsPerUnit * (1 - EMA) + perUnit * EMA;
-            }
-            dirty = true;
+            // Only time spent on this step itself, not on its ingredients.
+            const perUnit = Math.max(0, elapsed - frame.child) / 1000 / Math.max(1, units);
+            recordMethod(`${type}:${item}`, Boolean(success), perUnit);
         };
+    }
+
+    function recordMethodLocal(key, success, perUnit) {
+        const m = (mem.methods[key] = mem.methods[key] || { n: 0, ok: 0, secondsPerUnit: null });
+        m.n++;
+        if (success) {
+            m.ok++;
+            m.secondsPerUnit = m.secondsPerUnit === null ? perUnit : m.secondsPerUnit * (1 - EMA) + perUnit * EMA;
+        }
+        dirty = true;
     }
 
     // Multiplier for the planner's base cost of a method, plus a failure penalty.
@@ -86,15 +92,15 @@ function createLearning(ctx) {
 
     // ---------- places ----------
 
-    function chunkKey(pos) {
-        return `${dimension()}:${Math.floor(pos.x / 16)}:${Math.floor(pos.z / 16)}`;
+    function chunkKey(pos, dim = dimension()) {
+        return `${dim}:${Math.floor(pos.x / 16)}:${Math.floor(pos.z / 16)}`;
     }
 
-    function remember(kind, name, pos, count = 1) {
+    function rememberLocal(kind, name, pos, count = 1, dim = dimension()) {
         if (config.learn === false) return;
         const byKind = (mem.places[kind] = mem.places[kind] || {});
         const byName = (byKind[name] = byKind[name] || {});
-        const key = chunkKey(pos);
+        const key = chunkKey(pos, dim);
         const entry = byName[key] || { x: 0, y: 0, z: 0, count: 0 };
         Object.assign(entry, { x: Math.floor(pos.x), y: Math.floor(pos.y), z: Math.floor(pos.z), t: Date.now() });
         entry.count = Math.max(entry.count, count);
@@ -123,8 +129,8 @@ function createLearning(ctx) {
     }
 
     // Went there and it's gone: drop those entries.
-    function forget(kind, names, pos) {
-        const key = chunkKey(pos);
+    function forgetLocal(kind, names, pos, dim = dimension()) {
+        const key = chunkKey(pos, dim);
         for (const name of names) {
             if (mem.places[kind]?.[name]?.[key]) {
                 delete mem.places[kind][name][key];
@@ -178,7 +184,7 @@ function createLearning(ctx) {
         return best;
     }
 
-    function reward(context, arm, value) {
+    function rewardLocal(context, arm, value) {
         if (config.learn === false) return;
         const b = (mem.bandits[context] = mem.bandits[context] || {});
         const s = (b[arm] = b[arm] || { n: 0, sum: 0 });
@@ -198,9 +204,9 @@ function createLearning(ctx) {
 
     // ---------- danger ----------
 
-    function addDanger(pos, weight) {
+    function addDangerLocal(pos, weight, dim = dimension()) {
         if (config.learn === false) return;
-        mem.danger.push({ x: Math.floor(pos.x), z: Math.floor(pos.z), dim: dimension(), w: weight, t: Date.now() });
+        mem.danger.push({ x: Math.floor(pos.x), z: Math.floor(pos.z), dim, w: weight, t: Date.now() });
         if (mem.danger.length > 300) mem.danger.shift();
         dirty = true;
     }
@@ -215,8 +221,8 @@ function createLearning(ctx) {
 
     // ---------- unreachable spots ----------
 
-    function markUnreachable(pos) {
-        mem.unreachable[`${dimension()}:${pos.x},${pos.y},${pos.z}`] = Date.now();
+    function markUnreachableLocal(pos, dim = dimension()) {
+        mem.unreachable[`${dim}:${pos.x},${pos.y},${pos.z}`] = Date.now();
         dirty = true;
     }
 
@@ -232,11 +238,58 @@ function createLearning(ctx) {
     }
 
     // Running average: move `key` a step of size `alpha` towards `sample`.
-    function ema(key, sample, alpha = 0.2) {
+    function emaLocal(key, sample, alpha = 0.2) {
         if (config.learn === false) return;
         const old = mem.values[key];
         mem.values[key] = old === undefined ? sample : old * (1 - alpha) + sample * alpha;
         dirty = true;
+    }
+
+    // ---------- sharing with the crew ----------
+
+    // Each update is applied here and, in a crew, sent to the other bots.
+    // Updates tied to a place carry the dimension they happened in.
+    let applyingShared = false;
+    const WITH_DIMENSION = { remember: 4, forget: 3, addDanger: 2, markUnreachable: 1 };
+    function shared(op, local) {
+        return (...args) => {
+            if (op in WITH_DIMENSION) {
+                args.length = WITH_DIMENSION[op];
+                args.push(dimension());
+            }
+            if (ctx.crew && !applyingShared) {
+                const plain = args.map((a) => (a && typeof a === "object" && "x" in a ? { x: a.x, y: a.y, z: a.z } : a));
+                ctx.crew.send({ type: "learn", op, args: plain });
+            }
+            return local(...args);
+        };
+    }
+    const LOCAL = {
+        remember: rememberLocal,
+        forget: forgetLocal,
+        addDanger: addDangerLocal,
+        markUnreachable: markUnreachableLocal,
+        reward: rewardLocal,
+        ema: emaLocal,
+        recordMethod: recordMethodLocal,
+    };
+    const remember = shared("remember", rememberLocal);
+    const forget = shared("forget", forgetLocal);
+    const addDanger = shared("addDanger", addDangerLocal);
+    const markUnreachable = shared("markUnreachable", markUnreachableLocal);
+    const reward = shared("reward", rewardLocal);
+    const ema = shared("ema", emaLocal);
+    const recordMethod = shared("recordMethod", recordMethodLocal);
+    if (ctx.crew) {
+        ctx.crew.onLearn(({ op, args }) => {
+            if (!LOCAL[op]) return;
+            applyingShared = true;
+            try {
+                LOCAL[op](...args);
+            } finally {
+                applyingShared = false;
+            }
+        });
     }
 
     // ---------- counters, saving, summary ----------

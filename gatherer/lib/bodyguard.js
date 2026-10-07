@@ -27,6 +27,8 @@ function installBodyguard(ctx) {
                 .sort((a, b) => a.position.distanceTo(ward.position) - b.position.distanceTo(ward.position))[0];
         }
         if (!attacker) return;
+        // Never turn on a crewmate (e.g. an arrow that went astray).
+        if (attacker.username && ctx.crew?.members().has(attacker.username.toLowerCase())) return;
         if (attacker.type === "player" && !config.guardAgainstPlayers) {
             ctx.log(`${attacker.username} hurt ${ctx.ward}, but guardAgainstPlayers is off.`);
             return;

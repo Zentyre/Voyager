@@ -32,7 +32,7 @@ function createContext(bot, config) {
         placedStations: [], // crafting tables / furnaces we put down
     };
 
-    ctx.log = (message) => console.log(`[gatherer] ${message}`);
+    ctx.log = (message) => console.log(`[${config.username}] ${message}`);
     ctx.say = (message) => {
         ctx.log(message);
         if (bot.entity && config.chatter !== false) bot.chat(message);

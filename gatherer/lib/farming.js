@@ -39,6 +39,8 @@ function installFarming(ctx) {
         for (const crop of crops) {
             for (const block of ripeCrops(crop)) {
                 if (harvested >= limit) return harvested;
+                if (ctx.crew?.claimedByOther(`crop:${block.position}`)) continue;
+                ctx.crew?.claim(`crop:${block.position}`, 30000);
                 ctx.checkStop();
                 await ctx.guard();
                 await ctx.act(() => ctx.goTo(block.position, 2));
