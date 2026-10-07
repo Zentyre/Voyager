@@ -30,14 +30,21 @@ const RECONNECT_MS = 15000;
 function startCrew(configs) {
     const members = configs.map((config) => ({
         config,
-        name: config.username,
+        label: config.username, // name in config.json
+        name: config.username, // in-game name, learned at login (differs for Microsoft accounts)
         worker: null,
         online: false,
         busy: false,
         quitting: false,
         retries: 0,
     }));
-    const byName = (name) => members.find((m) => m.name.toLowerCase() === String(name).toLowerCase());
+    const byName = (name) => {
+        const n = String(name).toLowerCase();
+        return members.find((m) => m.name.toLowerCase() === n || m.label.toLowerCase() === n);
+    };
+    // Every name a crew member answers to (in-game names and config labels).
+    const allNames = () => members.flatMap((m) => [m.name, m.label]);
+    const microsoft = members.some((m) => m.config.auth === "microsoft");
     const log = (text) => console.log(`[crew] ${text}`);
     let shuttingDown = false;
 
@@ -114,12 +121,17 @@ function startCrew(configs) {
         });
         member.worker = worker;
         member.quitting = false;
+        // Don't hold up the others forever if a sign-in is never completed.
+        setTimeout(() => startNext(member), 20 * 60000);
         worker.on("message", (msg) => {
             switch (msg.type) {
                 case "online":
                     member.online = true;
                     member.retries = 0;
+                    if (msg.name) member.name = msg.name;
+                    for (const m of members) post(m, { type: "members", names: allNames() });
                     electLeader();
+                    startNext(member);
                     break;
                 case "offline":
                     member.online = false;
@@ -140,6 +152,7 @@ function startCrew(configs) {
         });
         worker.on("error", (err) => log(`${member.name} crashed: ${err.stack || err.message}`));
         worker.on("exit", () => {
+            startNext(member);
             member.worker = null;
             member.online = false;
             electLeader();
@@ -155,9 +168,20 @@ function startCrew(configs) {
         });
     }
 
-    // Stagger logins a little; servers dislike many joins at once.
-    members.forEach((m, i) => setTimeout(() => spawn(m), i * 3000));
-    log(`Starting ${members.length} bots: ${members.map((m) => m.name).join(", ")}.`);
+    // Bring bots in one after another: each starts once the previous one is
+    // online (or gave up), at least 3 s apart. With Microsoft accounts this
+    // also means sign-in codes appear one at a time.
+    const waiting = [...members];
+    let lastStarter = null;
+    function startNext(after) {
+        if (after !== lastStarter || !waiting.length) return;
+        lastStarter = waiting.shift();
+        setTimeout(() => spawn(lastStarter), 3000);
+    }
+    lastStarter = waiting.shift();
+    spawn(lastStarter);
+    log(`Starting ${members.length} bots: ${members.map((m) => m.label).join(", ")}.`);
+    if (microsoft) log("Microsoft accounts: each bot that hasn't signed in before will show a code to enter, one at a time.");
 
     // Terminal: "<botname> cmd", "all cmd", "crew", or a crew command.
     readline.createInterface({ input: process.stdin }).on("line", (line) => {
@@ -196,6 +220,10 @@ function createCrewClient(port, { config, names }) {
             case "leader":
                 leader = msg.value;
                 break;
+            case "members":
+                memberNames.clear();
+                for (const n of msg.names) memberNames.add(n.toLowerCase());
+                break;
             case "claim":
                 claims.set(msg.key, { owner: msg.owner, until: msg.until });
                 break;
@@ -219,7 +247,7 @@ function createCrewClient(port, { config, names }) {
         members: () => memberNames,
         isLeader: () => leader,
         send: (msg) => port.postMessage(msg),
-        online: () => port.postMessage({ type: "online" }),
+        online: (name) => port.postMessage({ type: "online", name }),
         offline: (intentional) => port.postMessage({ type: "offline", intentional }),
         setBusy: (busy) => port.postMessage({ type: "state", busy }),
 
