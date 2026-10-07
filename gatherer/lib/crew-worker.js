@@ -9,5 +9,6 @@ const { createCrewClient } = require("./crew");
 const reporter = {
     status: (status) => parentPort.postMessage({ type: "status", status }),
     log: (line) => parentPort.postMessage({ type: "log", line }),
+    signIn: (signIn) => parentPort.postMessage({ type: "signin", signIn }),
 };
 startBot(workerData.config, createCrewClient(parentPort, workerData), reporter);

@@ -36,6 +36,30 @@ For a LAN world the port is printed in chat when you open it. The default
 
 ## Running
 
+### Without a terminal (Windows)
+
+Double-click **`Start Gatherer.vbs`** in the `gatherer` folder. It starts
+Gatherer in the background and opens the dashboard
+(http://localhost:3000) in your browser. From there:
+
+- **Start** / **Stop** each bot (or **Start all** / **Stop all**). A bot that
+  needs a Microsoft sign-in shows the code and link right on its card.
+- **Update** downloads the latest version; **Restart** then runs it.
+- **Shut down** disconnects every bot and closes Gatherer.
+
+Opening the launcher again while Gatherer is running just opens the
+dashboard. Output is saved to `logs/gatherer.log`.
+
+To start some bots right away, add `"autoStart": ["Miner"]` (or
+`"autoStart": true` for all) to `config.json`. For an icon, right-click the
+launcher → *Show more options* → *Send to* → *Desktop (create shortcut)*. To start
+Gatherer with Windows, put that shortcut in the folder that opens with
+**Win+R** → `shell:startup`.
+
+You still edit `config.json` with Notepad (right-click → *Open with*).
+
+### From a terminal
+
 ```
 npm start                                  # runs the tasks in config.json
 node gatherer.js oak_log:64 iron_pickaxe:1 # or pass tasks on the command line
@@ -322,6 +346,7 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `chatter`            | `true`        | Post progress messages in game chat                               |
 | `deathWhisper`       | `true`        | `/msg` the owner where the bot died                               |
 | `dashboard`          | `{ "port": 3000, "host": "127.0.0.1" }` | Web dashboard; `false` to turn it off |
+| `autoStart`          | `[]`          | With `Start Gatherer.vbs`: bots to start right away (names, or `true` for all) |
 | `tasks`              | `[]`          | `[{ "item": "oak_log", "count": 32 }, …]`                         |
 | `bots`               | `[]`          | Crew members: `[{ "username": "Miner" }, …]`, each may override any setting |
 | `reconnect`          | `true`        | Crew: rejoin automatically after being kicked or disconnected     |
@@ -362,7 +387,9 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `lib/bot.js`        | One bot: connection, task queue, commands                 |
 | `lib/crew.js`       | Crew coordinator (main thread) and its link to each bot   |
 | `lib/crew-worker.js`| Worker-thread entry point for a crew member               |
-| `lib/dashboard.js`  | Web dashboard server (status stream, commands)            |
+| `lib/dashboard.js`  | Web dashboard server (status stream, commands, start/stop) |
+| `lib/updater.js`    | Dashboard Update/Restart (git pull, npm install)          |
+| `Start Gatherer.vbs`| Windows launcher: runs Gatherer hidden, opens the dashboard |
 | `dashboard/index.html` | The dashboard page                                     |
 | `lib/compat.js`     | Minecraft 26.3 support: registers `compat/26.3` data, adapts packets |
 | `lib/mods.js`       | Modded servers: unknown modded blocks, list of the server's mods |

@@ -27,7 +27,10 @@ const RECONNECT_MS = 15000;
 
 // ---------- main thread ----------
 
-function startCrew(configs) {
+// `manager`: run from the dashboard (no terminal needed): bots start and stop
+// from there, only those in "autoStart" start by themselves, and the program
+// keeps running when every bot is stopped.
+function startCrew(configs, { manager = false } = {}) {
     const members = configs.map((config) => ({
         config,
         label: config.username, // name in config.json
@@ -37,6 +40,11 @@ function startCrew(configs) {
         busy: false,
         quitting: false,
         retries: 0,
+        state: "stopped", // stopped | queued | starting | online | reconnecting
+        signIn: null, // Microsoft sign-in code waiting to be entered
+        reconnectTimer: null,
+        reconnectAt: null,
+        version: null,
     }));
     const byName = (name) => {
         const n = String(name).toLowerCase();
@@ -51,6 +59,24 @@ function startCrew(configs) {
         hub?.log("crew", text);
     };
     let shuttingDown = false;
+
+    // What the dashboard shows for a bot that isn't online to report itself.
+    function report(member) {
+        hub?.status({
+            label: member.label,
+            name: member.name,
+            online: false,
+            state: member.state,
+            signIn: member.signIn,
+            reconnectAt: member.reconnectAt,
+            version: member.version,
+            managed: manager,
+        });
+    }
+    function setState(member, state) {
+        member.state = state;
+        if (state !== "online") report(member);
+    }
 
     function post(member, msg) {
         if (member.worker) member.worker.postMessage(msg);
@@ -125,17 +151,26 @@ function startCrew(configs) {
         });
         member.worker = worker;
         member.quitting = false;
+        member.reconnectTimer = null;
+        member.reconnectAt = null;
+        setState(member, "starting");
         // Don't hold up the others forever if a sign-in is never completed.
-        setTimeout(() => startNext(member), 20 * 60000);
+        setTimeout(() => startedOrGaveUp(member), 20 * 60000);
         worker.on("message", (msg) => {
             switch (msg.type) {
                 case "online":
                     member.online = true;
                     member.retries = 0;
+                    member.signIn = null;
+                    member.state = "online";
                     if (msg.name) member.name = msg.name;
                     for (const m of members) post(m, { type: "members", names: allNames() });
                     electLeader();
-                    startNext(member);
+                    startedOrGaveUp(member);
+                    break;
+                case "signin":
+                    member.signIn = msg.signIn;
+                    report(member);
                     break;
                 case "offline":
                     member.online = false;
@@ -153,7 +188,8 @@ function startCrew(configs) {
                     others(member, msg);
                     break;
                 case "status":
-                    hub?.status(msg.status);
+                    member.version = msg.status.version || member.version;
+                    if (msg.status.online) hub?.status({ ...msg.status, state: "online", managed: manager });
                     break;
                 case "log":
                     hub?.log(member.label, msg.line);
@@ -162,46 +198,129 @@ function startCrew(configs) {
         });
         worker.on("error", (err) => log(`${member.name} crashed: ${err.stack || err.message}`));
         worker.on("exit", () => {
-            startNext(member);
+            startedOrGaveUp(member);
             member.worker = null;
             member.online = false;
+            member.signIn = null;
             electLeader();
             const again = !shuttingDown && !member.quitting && member.config.reconnect !== false;
             if (again) {
                 const delay = Math.min(RECONNECT_MS * 2 ** member.retries++, 5 * 60000);
                 log(`${member.name} left; reconnecting in ${Math.round(delay / 1000)}s.`);
-                setTimeout(() => spawn(member), delay);
-            } else if (members.every((m) => !m.worker)) {
-                log("All bots have left.");
-                process.exit(0);
+                member.reconnectAt = Date.now() + delay;
+                member.reconnectTimer = setTimeout(() => spawn(member), delay);
+                setState(member, "reconnecting");
+            } else {
+                setState(member, "stopped");
+                if (!manager && members.every((m) => !m.worker && !m.reconnectTimer)) {
+                    log("All bots have left.");
+                    process.exit(0);
+                }
             }
-        });
-    }
-
-    const settings = configs[0].dashboard;
-    if (settings !== false) {
-        hub = require("./dashboard").startDashboard(settings, {
-            names: members.map((m) => m.label),
-            onCommand: (target, text) => {
-                if (target === "auto") return consoleCommand(text);
-                consoleCommand(`${target} ${text.replace(/^[!.]/, "")}`);
-            },
         });
     }
 
     // Bring bots in one after another: each starts once the previous one is
     // online (or gave up), at least 3 s apart. With Microsoft accounts this
     // also means sign-in codes appear one at a time.
-    const waiting = [...members];
-    let lastStarter = null;
-    function startNext(after) {
-        if (after !== lastStarter || !waiting.length) return;
-        lastStarter = waiting.shift();
-        setTimeout(() => spawn(lastStarter), 3000);
+    const waiting = [];
+    let starting = null;
+    function queueStart(list) {
+        for (const m of list) {
+            if (m.worker || m.reconnectTimer || waiting.includes(m)) continue;
+            m.retries = 0;
+            waiting.push(m);
+            setState(m, "queued");
+        }
+        pump();
     }
-    lastStarter = waiting.shift();
-    spawn(lastStarter);
-    log(`Starting ${members.length} bots: ${members.map((m) => m.label).join(", ")}.`);
+    function pump() {
+        if (starting || !waiting.length || shuttingDown) return;
+        starting = waiting.shift();
+        spawn(starting);
+    }
+    function startedOrGaveUp(member) {
+        if (member !== starting) return;
+        starting = null;
+        setTimeout(pump, 3000);
+    }
+
+    function stopBot(member) {
+        const queued = waiting.indexOf(member);
+        if (queued >= 0) waiting.splice(queued, 1);
+        if (member.reconnectTimer) {
+            clearTimeout(member.reconnectTimer);
+            member.reconnectTimer = null;
+            member.reconnectAt = null;
+        }
+        if (!member.worker) return setState(member, "stopped");
+        member.quitting = true;
+        post(member, { type: "quit" });
+        // Not logged in yet (e.g. waiting for a sign-in)? End it anyway.
+        const worker = member.worker;
+        setTimeout(() => member.worker === worker && worker.terminate(), 5000);
+    }
+
+    function shutdown(then) {
+        shuttingDown = true;
+        log("Saving and disconnecting everyone...");
+        for (const m of members) stopBot(m);
+        setTimeout(() => (then ? then() : process.exit(0)), 3500);
+    }
+
+    // Dashboard buttons: start/stop bots, update, shut down.
+    function control(action, target) {
+        const member = target ? byName(target) : null;
+        switch (action) {
+            case "start":
+                if (member) queueStart([member]);
+                break;
+            case "stop":
+                if (member) stopBot(member);
+                break;
+            case "startAll":
+                queueStart(members);
+                break;
+            case "stopAll":
+                for (const m of members) stopBot(m);
+                break;
+            case "update":
+                require("./updater").update((line) => hub?.log("updater", line));
+                break;
+            case "restart":
+                hub?.log("updater", "Restarting...");
+                shutdown(() => require("./updater").restart());
+                break;
+            case "shutdown":
+                hub?.log("crew", "Shutting down.");
+                shutdown();
+                break;
+        }
+    }
+
+    const settings = configs[0].dashboard;
+    if (settings !== false) {
+        hub = require("./dashboard").startDashboard(settings, {
+            names: members.map((m) => m.label),
+            manager,
+            onControl: manager ? control : null,
+            onCommand: (target, text) => {
+                if (target === "auto") return consoleCommand(text);
+                consoleCommand(`${target} ${text.replace(/^[!.]/, "")}`);
+            },
+        });
+        for (const m of members) report(m);
+    }
+
+    if (manager) {
+        const auto = configs[0].autoStart;
+        const list = auto === true ? members : members.filter((m) => (auto || []).some((n) => byName(n) === m));
+        if (list.length) queueStart(list);
+        log(`Ready. ${list.length ? `Starting ${list.map((m) => m.label).join(", ")}; s` : "S"}tart the others from the dashboard.`);
+    } else {
+        queueStart(members);
+        log(`Starting ${members.length} bots: ${members.map((m) => m.label).join(", ")}.`);
+    }
     if (microsoft) log("Microsoft accounts: each bot that hasn't signed in before will show a code to enter, one at a time.");
 
     // Terminal and dashboard: "<botname> cmd", "all cmd", "crew", or a crew command.
@@ -219,12 +338,7 @@ function startCrew(configs) {
     }
     readline.createInterface({ input: process.stdin }).on("line", consoleCommand);
 
-    process.on("SIGINT", () => {
-        shuttingDown = true;
-        log("Saving and disconnecting everyone...");
-        for (const m of members) post(m, { type: "quit" });
-        setTimeout(() => process.exit(0), 3000);
-    });
+    process.on("SIGINT", () => shutdown());
 }
 
 // ---------- worker side ----------

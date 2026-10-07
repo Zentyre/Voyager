@@ -87,7 +87,7 @@ main { padding: 16px; display: grid; gap: 16px; grid-template-columns: minmax(0,
   padding: 14px;
   display: flex; flex-direction: column; gap: 10px;
 }
-.card.offline { opacity: 0.6; }
+.card.offline > :not(.top):not(.signin) { opacity: 0.55; }
 .top { display: flex; align-items: center; gap: 8px; }
 .top .name { font-weight: 650; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .top .label { color: var(--muted); font-size: 12px; }
@@ -137,6 +137,16 @@ aside .head strong { margin-right: auto; }
 #log .b { font-weight: 600; }
 #log .row.you .b { color: var(--info); }
 #log .row.bad .msg { color: var(--bad); }
+.manage { display: none; gap: 6px; flex-wrap: wrap; }
+body.managed .manage { display: flex; }
+.power { margin-left: 4px; padding: 3px 10px; font-size: 12px; display: none; }
+body.managed .power { display: inline-block; }
+.chip.starting, .chip.queued, .chip.reconnecting { color: var(--info); border-color: var(--info); }
+.chip.stopped { color: var(--muted); }
+.signin { border: 1px solid var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); border-radius: 8px; padding: 10px; font-size: 13px; display: none; }
+.signin.show { display: block; }
+.signin code { font-size: 17px; font-weight: 700; letter-spacing: 1px; }
+.signin a { color: var(--info); }
 .empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--line); border-radius: var(--radius); }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
 .toast.show { opacity: 1; }
@@ -150,6 +160,13 @@ aside .head strong { margin-right: auto; }
     <input id="cmdText" placeholder="Command, e.g. get oak_log 64 · status · guard Zentyre" aria-label="Command">
     <button class="primary">Send</button>
   </form>
+  <div class="manage">
+    <button type="button" data-control="startAll">Start all</button>
+    <button type="button" data-control="stopAll">Stop all</button>
+    <button type="button" data-control="update" title="Download the latest version">Update</button>
+    <button type="button" data-control="restart" title="Restart the program (after an update)">Restart</button>
+    <button type="button" class="danger" data-control="shutdown">Shut down</button>
+  </div>
 </header>
 <main>
   <section id="bots"><div class="empty">Waiting for bots…</div></section>
@@ -183,6 +200,24 @@ async function command(target, text) {
   }
 }
 
+async function control(action, bot) {
+  try {
+    const res = await fetch("control", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action, bot }) });
+    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+  } catch (err) {
+    toast("Couldn't do that: " + err.message);
+  }
+}
+document.querySelector(".manage").addEventListener("click", (e) => {
+  const action = e.target.closest("button")?.dataset.control;
+  if (!action) return;
+  if (action === "shutdown" && !confirm("Disconnect every bot and close Gatherer? Start it again with Start Gatherer.")) return;
+  if (action === "stopAll" && !confirm("Disconnect every bot?")) return;
+  control(action);
+  if (action === "shutdown") toast("Shutting down…");
+  if (action === "restart") toast("Restarting… this page reconnects by itself.");
+});
+
 // ---------- header: target picker and command line ----------
 function renderTargets() {
   const sel = $("#target"), filter = $("#logFilter");
@@ -213,7 +248,8 @@ function makeCard(label) {
   card.className = "card";
   card.dataset.label = label;
   card.innerHTML = `
-    <div class="top"><span class="dot"></span><span class="name"></span><span class="label"></span><span class="chip"></span></div>
+    <div class="top"><span class="dot"></span><span class="name"></span><span class="label"></span><span class="chip"></span><button type="button" class="power"></button></div>
+    <div class="signin"></div>
     <div class="bars">
       <span>Health</span><div class="bar health"><i></i></div><span class="num hp"></span>
       <span>Food</span><div class="bar food"><i></i></div><span class="num fd"></span>
@@ -244,6 +280,11 @@ function makeCard(label) {
     const cmd = e.target.closest("button")?.dataset.cmd;
     if (cmd) command(label, cmd);
   });
+  card.querySelector(".power").addEventListener("click", (e) => {
+    const action = e.target.dataset.action;
+    if (action === "stop" && !confirm(`Disconnect ${$(".name", card).textContent}?`)) return;
+    control(action, label);
+  });
   card.querySelector(".coords").addEventListener("click", (e) => {
     const text = e.target.textContent;
     if (text && navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast("Copied " + text));
@@ -264,9 +305,30 @@ function renderBot(b) {
   $(".name", card).textContent = b.name || b.label;
   $(".label", card).textContent = b.name && b.name !== b.label ? b.label : "";
   const chip = $(".chip", card);
-  const mode = !b.online ? "offline" : b.ward ? "guarding" : b.busy ? "working" : "idle";
+  const state = b.online ? "online" : b.state || "offline";
+  const mode = b.online ? (b.ward ? "guarding" : b.busy ? "working" : "idle") : state;
+  const secs = b.reconnectAt ? Math.max(0, Math.round((b.reconnectAt - Date.now()) / 1000)) : 0;
   chip.className = "chip " + mode;
-  chip.textContent = !b.online ? "Offline" : b.ward ? "Guarding " + b.ward : b.busy ? "Working" : "Idle";
+  chip.textContent = {
+    guarding: "Guarding " + b.ward, working: "Working", idle: "Idle",
+    stopped: "Stopped", queued: "Queued", starting: b.signIn ? "Sign in needed" : "Starting…",
+    reconnecting: `Reconnecting${secs ? " in " + secs + "s" : "…"}`, offline: "Offline",
+  }[mode] || mode;
+  const power = $(".power", card);
+  const running = ["online", "starting", "queued", "reconnecting"].includes(state);
+  power.dataset.action = running ? "stop" : "start";
+  power.textContent = running ? "Stop" : "Start";
+  power.className = "power" + (running ? " danger" : " primary");
+  const signin = $(".signin", card);
+  if (b.signIn && !b.online) {
+    const mins = Math.max(0, Math.round((b.signIn.expiresAt - Date.now()) / 60000));
+    signin.innerHTML = `<b>Sign in this bot's Microsoft account.</b> Open <a href="${esc(b.signIn.uri)}" target="_blank" rel="noopener">${esc(b.signIn.uri)}</a> (a private window is best) and enter <code>${esc(b.signIn.code)}</code> <button type="button" class="copy">Copy</button><div class="muted">Expires in ${mins} min.</div>`;
+    $(".copy", signin).onclick = () => navigator.clipboard?.writeText(b.signIn.code).then(() => toast("Copied " + b.signIn.code));
+    signin.classList.add("show");
+  } else {
+    signin.classList.remove("show");
+    signin.innerHTML = "";
+  }
 
   const hp = b.health ?? 0, fd = b.food ?? 0;
   $(".bar.health > i", card).style.width = (hp / 20) * 100 + "%";
@@ -279,7 +341,7 @@ function renderBot(b) {
     const pct = b.task.count ? Math.round((b.task.done / b.task.count) * 100) : 0;
     task.innerHTML = `<div class="line"><span>Getting <b>${esc(pretty(b.task.item))}</b></span><span class="num">${b.task.done}/${b.task.count}</span></div><div class="bar task"><i style="width:${pct}%"></i></div>`;
   } else {
-    task.innerHTML = `<div class="line muted">${b.online ? (b.ward ? "On guard duty" : "No task") : "Not connected"}</div>`;
+    task.innerHTML = `<div class="line muted">${b.online ? (b.ward ? "On guard duty" : "No task") : state === "stopped" ? "Not running" : "Not connected"}</div>`;
   }
 
   const p = b.position;
@@ -344,6 +406,7 @@ function connect() {
     state.bots.clear();
     for (const b of data.bots) state.bots.set(b.label, b);
     state.logs = data.logs;
+    document.body.classList.toggle("managed", Boolean(data.manager));
     $("#bots").innerHTML = state.bots.size ? "" : `<div class="empty">Waiting for bots…</div>`;
     for (const b of state.bots.values()) renderBot(b);
     renderTargets();
@@ -361,6 +424,8 @@ function connect() {
 }
 connect();
 loadItems();
+// keep "Reconnecting in Ns" counting down
+setInterval(() => { for (const b of state.bots.values()) if (b.state === "reconnecting" && !b.online) renderBot(b); }, 1000);
 </script>
 </body>
 </html>

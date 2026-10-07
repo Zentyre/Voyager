@@ -4,3 +4,4 @@ memory/
 accounts/
 memory.json
 memory.json.tmp
+logs/

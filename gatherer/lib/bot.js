@@ -102,6 +102,11 @@ function createBot(config, crew, reporter) {
                 `Sign in the Minecraft account for bot "${config.username}": open ${data.verification_uri} ` +
                 `and enter code ${data.user_code} (expires in ${Math.round(data.expires_in / 60)} min).`;
             console.log(`\n===== ${text} =====\n`);
+            reporter?.signIn?.({
+                uri: data.verification_uri,
+                code: data.user_code,
+                expiresAt: Date.now() + data.expires_in * 1000,
+            });
         },
     });
 

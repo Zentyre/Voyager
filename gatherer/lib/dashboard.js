@@ -14,7 +14,8 @@ const crypto = require("crypto");
 const PAGE = path.join(__dirname, "..", "dashboard", "index.html");
 const LOG_KEEP = 400;
 
-function startDashboard(options, { onCommand, names = [] } = {}) {
+// `onControl(action, bot)` (manager mode): start/stop bots, update, shut down.
+function startDashboard(options, { onCommand, onControl = null, manager = false, names = [] } = {}) {
     const settings = { port: 3000, host: "127.0.0.1", ...(typeof options === "object" ? options : {}) };
     const local = ["127.0.0.1", "localhost", "::1"].includes(settings.host);
     const token = local ? null : settings.token || crypto.randomBytes(9).toString("base64url");
@@ -62,7 +63,7 @@ function startDashboard(options, { onCommand, names = [] } = {}) {
         }
         if (req.method === "GET" && url.pathname === "/events") {
             res.writeHead(200, { ...headers, "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
-            send(res, "snapshot", { bots: [...bots.values()], logs: logs.slice(-200) });
+            send(res, "snapshot", { bots: [...bots.values()], logs: logs.slice(-200), manager: Boolean(onControl) });
             clients.add(res);
             const ping = setInterval(() => res.write(": ping\n\n"), 20000);
             req.on("close", () => {
@@ -74,6 +75,27 @@ function startDashboard(options, { onCommand, names = [] } = {}) {
         if (req.method === "GET" && url.pathname === "/items") {
             res.writeHead(200, { "content-type": "application/json" });
             return res.end(JSON.stringify(itemNames()));
+        }
+        if (req.method === "POST" && url.pathname === "/control" && onControl) {
+            let body = "";
+            req.on("data", (chunk) => {
+                body += chunk;
+                if (body.length > 2000) req.destroy();
+            });
+            req.on("end", () => {
+                try {
+                    const { action, bot } = JSON.parse(body);
+                    const allowed = ["start", "stop", "startAll", "stopAll", "update", "restart", "shutdown"];
+                    if (!allowed.includes(action)) throw new Error("unknown action");
+                    res.writeHead(200, { "content-type": "application/json" });
+                    res.end('{"ok":true}');
+                    onControl(action, typeof bot === "string" ? bot : null);
+                } catch (err) {
+                    res.writeHead(400, { "content-type": "application/json" });
+                    res.end(JSON.stringify({ ok: false, error: err.message }));
+                }
+            });
+            return;
         }
         if (req.method === "POST" && url.pathname === "/command") {
             let body = "";
@@ -101,12 +123,23 @@ function startDashboard(options, { onCommand, names = [] } = {}) {
         res.end("Not found");
     });
 
+    // The port can be busy for a moment after a restart (the old copy is still
+    // closing), so keep trying for a while in manager mode.
+    let tries = 0;
     server.on("error", (err) => {
+        if (err.code === "EADDRINUSE" && manager && ++tries <= 20) {
+            setTimeout(() => server.listen(settings.port, settings.host), 1000);
+            return;
+        }
         console.log(
             err.code === "EADDRINUSE"
                 ? `[dashboard] Port ${settings.port} is in use (another copy running?). Set "dashboard": { "port": 3001 } in config.json to use another.`
                 : `[dashboard] ${err.message}`
         );
+        if (manager) {
+            console.log("[dashboard] Gatherer seems to be running already; open the dashboard in your browser.");
+            process.exit(0);
+        }
     });
     server.listen(settings.port, settings.host, () => {
         const host = local ? "localhost" : settings.host === "0.0.0.0" ? "<this computer's IP>" : settings.host;

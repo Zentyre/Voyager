@@ -48,6 +48,7 @@ const DEFAULTS = {
     reconnect: true, // crew mode: rejoin after being kicked or disconnected
     dashboard: { port: 3000, host: "127.0.0.1" }, // web page to watch and command the bots; false to turn off
     deathWhisper: true, // /msg the owner where a bot died
+    autoStart: [], // with Start Gatherer.vbs: bots to start right away (names, or true for all)
     tasks: [],
     bots: [], // crew mode: [{ "username": "Miner" }, { "username": "Farmer", ... }]
 };
@@ -61,9 +62,12 @@ function loadConfig(argv) {
     let configPath = path.join(__dirname, "..", "config.json");
     const cliTasks = [];
     const only = [];
+    let manager = false; // run from the dashboard (Start Gatherer.vbs)
     for (let i = 0; i < argv.length; i++) {
         if (argv[i] === "--config") {
             configPath = path.resolve(argv[++i]);
+        } else if (argv[i] === "--manager") {
+            manager = true;
         } else if (argv[i] === "--bot") {
             only.push(...argv[++i].split(",").map((n) => n.trim()).filter(Boolean));
         } else {
@@ -79,6 +83,7 @@ function loadConfig(argv) {
     const config = { ...DEFAULTS, ...fileConfig };
     if (cliTasks.length > 0) config.tasks = cliTasks;
     if (only.length > 0) config.only = only;
+    if (manager) config.manager = true;
     return config;
 }
 
