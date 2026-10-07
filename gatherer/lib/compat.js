@@ -118,6 +118,7 @@ function patchBot(bot) {
     // tick_end; a teleport confirmation (which now carries the position) is that
     // tick's movement. Mineflayer sends no tick_end and follows each confirmation
     // with an extra position packet, so pace its packets the same way.
+    let blockSequence = 0;
     let movedThisTick = false;
     let justConfirmed = false;
     const endTick = () => {
@@ -185,8 +186,11 @@ function patchBot(bot) {
                 if (name !== "flying") note(`out ${name} ${fmt(params)}`);
                 return write(name, params);
             case "block_dig":
-                // 26.3 inserted "change destroy direction" as action 1.
-                return write(name, { ...params, status: params.status >= 1 ? params.status + 1 : params.status });
+                // 26.3 inserted "change destroy direction" as action 1. Number the
+                // block actions like a real client (mineflayer always sends 0).
+                return write(name, { ...params, status: params.status >= 1 ? params.status + 1 : params.status, sequence: params.sequence || ++blockSequence });
+            case "block_place":
+                return write(name, { ...params, sequence: params.sequence || ++blockSequence });
             case "arm_animation":
                 // Swinging is now "punch", main hand only.
                 if (!params.hand) return write("punch", {});

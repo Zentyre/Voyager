@@ -154,13 +154,91 @@ function installActions(ctx) {
         if (!target || target.type !== block.type) return; // already gone
         await bot.tool.equipForBlock(target, { requireHarvest: true });
         if (!target.canHarvest(bot.heldItem?.type ?? null)) throw new Error("no tool that can harvest it");
-        try {
-            await ctx.withTimeout(bot.dig(target), target.digTime(bot.heldItem?.type ?? null) * 2 + 5000);
-        } catch (err) {
-            bot.stopDigging();
-            throw err;
-        }
+        await digBlock(target);
         await pickUpDrops(block.position);
+    }
+
+    // mineflayer marks a block as broken the moment its own timer runs out. The
+    // server may not agree yet: a lagging server finishes the break a little
+    // later, and one that disagrees about the dig time puts the block back. So
+    // wait for the server's word, and dig again if the block is still there.
+    let warnedServerDig = false;
+    async function digBlock(block) {
+        const pos = block.position;
+        for (let attempt = 0; attempt < 3; attempt++) {
+            ctx.checkStop();
+            const verdict = serverVerdict(pos);
+            try {
+                await ctx.withTimeout(bot.dig(block), block.digTime(bot.heldItem?.type ?? null) * 2 + 5000);
+            } catch (err) {
+                verdict.cancel();
+                bot.stopDigging();
+                throw err;
+            }
+            const result = await verdict.after(4000);
+            if (result === "broken") return;
+            if (!warnedServerDig) {
+                warnedServerDig = true;
+                ctx.log(
+                    result === "kept"
+                        ? `The server put the ${block.name} back after I broke it; digging it again.`
+                        : `The server hasn't confirmed breaking the ${block.name} (is it lagging?); digging it again.`
+                );
+            }
+            // Undo mineflayer's guess so the world matches the server again.
+            if (bot.blockAt(pos)?.type !== block.type) bot.world.setBlockStateId(pos, block.stateId);
+            block = bot.blockAt(pos);
+            if (!block || block.type === 0) return;
+        }
+        throw new Error(`the server wouldn't let me break the ${block.name}`);
+    }
+
+    // Watches the server's block updates for `pos`: "broken" once it reports
+    // air, "kept" if it reports the block again after we finished digging,
+    // "silent" if it says nothing within `ms` after we finished.
+    function serverVerdict(pos) {
+        const client = bot._client;
+        let result = null;
+        let finished = false;
+        let wake = null;
+        const seen = (stateId) => {
+            if (stateId === 0 || bot.registry.blocksByStateId[stateId]?.name?.endsWith("air")) result = "broken";
+            else if (finished && !result) result = "kept";
+            if (result && wake) wake();
+        };
+        const onChange = (packet) => {
+            const l = packet.location;
+            if (l && l.x === pos.x && l.y === pos.y && l.z === pos.z) seen(packet.type);
+        };
+        const onMulti = (packet) => {
+            const c = packet.chunkCoordinates;
+            if (!c || c.x !== pos.x >> 4 || c.y !== pos.y >> 4 || c.z !== pos.z >> 4) return;
+            for (const record of packet.records || []) {
+                const x = (record >> 8) & 15, z = (record >> 4) & 15, y = record & 15;
+                if (x === (pos.x & 15) && y === (pos.y & 15) && z === (pos.z & 15)) seen(Math.floor(record / 4096));
+            }
+        };
+        client.on("block_change", onChange);
+        client.on("multi_block_change", onMulti);
+        const cancel = () => {
+            client.removeListener("block_change", onChange);
+            client.removeListener("multi_block_change", onMulti);
+        };
+        return {
+            cancel,
+            after: (ms) =>
+                new Promise((resolve) => {
+                    finished = true;
+                    const done = () => {
+                        clearTimeout(timer);
+                        cancel();
+                        resolve(result || "silent");
+                    };
+                    const timer = setTimeout(done, ms);
+                    wake = done;
+                    if (result) done();
+                }),
+        };
     }
 
     // Pillar up with dirt until `block` is within reach, then break it.
@@ -181,7 +259,7 @@ function installActions(ctx) {
             const target = bot.blockAt(p);
             if (target && target.type === block.type) {
                 await bot.tool.equipForBlock(target, { requireHarvest: true });
-                await ctx.withTimeout(bot.dig(target), target.digTime(bot.heldItem?.type ?? null) * 2 + 5000);
+                await digBlock(target);
             }
             await digInReach(block.type);
             await shakeDownDrops();
@@ -202,7 +280,7 @@ function installActions(ctx) {
                 if (overhead.position.equals(p)) break; // that's the target: in reach now
                 if (!overhead.diggable || ctx.kb.neverBreakIds().includes(overhead.type)) throw new Error("something unbreakable overhead");
                 await bot.tool.equipForBlock(overhead, {});
-                await bot.dig(overhead);
+                await digBlock(overhead);
                 continue;
             }
             await pillarStep(feet);
@@ -223,7 +301,7 @@ function installActions(ctx) {
                 .map((pos) => bot.blockAt(pos))[0];
             if (!next) return;
             await bot.tool.equipForBlock(next, { requireHarvest: true });
-            await ctx.withTimeout(bot.dig(next), next.digTime(bot.heldItem?.type ?? null) * 2 + 5000);
+            await digBlock(next);
         }
     }
 
@@ -240,7 +318,7 @@ function installActions(ctx) {
                 .find((b) => b && /_leaves$/.test(b.name) && eye.distanceTo(b.position.offset(0.5, 0.5, 0.5)) <= 4.3);
             if (!under) return;
             await bot.tool.equipForBlock(under, {});
-            await ctx.withTimeout(bot.dig(under), 5000);
+            await digBlock(under);
             await ctx.wait(500); // let it fall
         }
     }
@@ -254,7 +332,7 @@ function installActions(ctx) {
             const b = bot.blockAt(top);
             if (!b || b.boundingBox !== "block") return;
             await bot.tool.equipForBlock(b, {});
-            await ctx.withTimeout(bot.dig(b), 6000);
+            await digBlock(b);
             await waitUntil(() => bot.entity.onGround && bot.entity.position.y < top.y + 0.5, 2000);
         }
     }
