@@ -1,0 +1,23 @@
+{
+    "host": "localhost",
+    "port": 25565,
+    "username": "Gatherer",
+    "auth": "offline",
+    "version": false,
+    "owner": "YourMinecraftName",
+
+    "viewDistance": "tiny",
+    "searchRadius": 48,
+    "exploreDistance": 64,
+    "maxExploreAttempts": 8,
+
+    "chest": null,
+    "returnHome": true,
+    "quitWhenDone": false,
+
+    "tasks": [
+        { "item": "oak_log", "count": 32 },
+        { "item": "cobblestone", "count": 64 },
+        { "item": "coal", "count": 16 }
+    ]
+}
