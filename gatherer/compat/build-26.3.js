@@ -459,6 +459,12 @@ function buildProtocol(p, via262, via263) {
     for (const n of parsers) if (!(n in parserSwitch)) parserSwitch[n] = "void";
     if (!nodeData) throw new Error("command_node missing");
 
+    // -- attribute ids: the inherited table is a stale 31-entry 1.21 list; 26.3 has 40
+    const attrKey = cb.packet_entity_update_attributes[1][1].type[1].type[1][0].type;
+    attrKey[1].mappings = Object.fromEntries(
+        via263.attributes.map((n, i) => [String(i), n.includes(":") ? n : `minecraft:${n}`])
+    );
+
     // -- item components
     buildItemComponents(def, via263.data_component_type);
 

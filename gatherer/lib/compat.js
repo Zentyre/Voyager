@@ -97,23 +97,63 @@ function patchBot(bot) {
     const conv = require("mineflayer/lib/conversions");
     const client = bot._client;
 
+    // Recent movement-related packets, printed if the server kicks the bot, so a
+    // kick can be traced to the packet that caused it.
+    const trace = [];
+    const note = (line) => {
+        trace.push(`${new Date().toISOString().slice(11, 23)} ${line}`);
+        if (trace.length > 40) trace.shift();
+    };
+    bot.on("kicked", () => {
+        if (!is26_3(bot) || !trace.length) return;
+        console.log(`[${bot.username}] 26.3 debug, last packets before the kick:\n  ${trace.join("\n  ")}`);
+    });
+
+    const teleports = new Map(); // teleport id -> the server's position packet
+    const confirmed = new Set();
+    const finite = (...values) => values.every((v) => v === undefined || Number.isFinite(v));
+    const inWorld = (p) => Math.abs(p.x ?? 0) < 3e7 && Math.abs(p.z ?? 0) < 3e7 && Math.abs(p.y ?? 0) < 2e7;
+
     const write = client.write.bind(client);
     client.write = (name, params) => {
         if (!is26_3(bot)) return write(name, params);
         switch (name) {
             case "teleport_confirm": {
+                // A second confirmation for the same teleport gets the player kicked.
+                if (confirmed.has(params.teleportId)) {
+                    note(`out teleport_confirm #${params.teleportId} DROPPED (already confirmed)`);
+                    return undefined;
+                }
+                confirmed.add(params.teleportId);
+                if (confirmed.size > 50) confirmed.delete(confirmed.values().next().value);
                 // 26.3 confirms with the position the client ended up at
                 // (mineflayer has already applied the teleport at this point).
+                // Absolute angles are echoed back exactly as the server sent them.
+                const tp = teleports.get(params.teleportId);
+                teleports.delete(params.teleportId);
                 const pos = bot.entity?.position;
-                return write(name, {
+                const out = {
                     teleportId: params.teleportId,
-                    x: pos?.x ?? 0,
-                    y: pos?.y ?? 0,
-                    z: pos?.z ?? 0,
-                    yaw: bot.entity ? conv.toNotchianYaw(bot.entity.yaw) : 0,
-                    pitch: bot.entity ? conv.toNotchianPitch(bot.entity.pitch) : 0,
-                });
+                    x: pos?.x ?? tp?.x ?? 0,
+                    y: pos?.y ?? tp?.y ?? 0,
+                    z: pos?.z ?? tp?.z ?? 0,
+                    yaw: tp && !tp.flags?.yaw ? tp.yaw : bot.entity ? conv.toNotchianYaw(bot.entity.yaw) : 0,
+                    pitch: tp && !tp.flags?.pitch ? tp.pitch : bot.entity ? conv.toNotchianPitch(bot.entity.pitch) : 0,
+                };
+                note(`out teleport_confirm #${out.teleportId} ${fmt(out)}`);
+                return write(name, out);
             }
+            case "position":
+            case "position_look":
+            case "look":
+            case "flying":
+            case "vehicle_move":
+                if (!finite(params.x, params.y, params.z, params.yaw, params.pitch) || !inWorld(params)) {
+                    note(`out ${name} DROPPED (invalid values) ${fmt(params)}`);
+                    return undefined;
+                }
+                if (name !== "flying") note(`out ${name} ${fmt(params)}`);
+                return write(name, params);
             case "block_dig":
                 // 26.3 inserted "change destroy direction" as action 1.
                 return write(name, { ...params, status: params.status >= 1 ? params.status + 1 : params.status });
@@ -126,6 +166,9 @@ function patchBot(bot) {
                 return write(name, { ...rest, textSlot: isFrontText === false ? 0 : 1 });
             }
             default:
+                if (/^(player_input|player_loaded|use_entity|entity_action|abilities)$/.test(name)) {
+                    note(`out ${name} ${fmt(params)}`);
+                }
                 return write(name, params);
         }
     };
@@ -133,7 +176,23 @@ function patchBot(bot) {
     const emit = client.emit.bind(client);
     client.emit = (event, packet, ...rest) => {
         if (!is26_3(bot) || !packet || typeof packet !== "object") return emit(event, packet, ...rest);
+        if (/^(position|player_rotation|respawn|login|explosion|entity_velocity|entity_teleport|sync_entity_position|game_state_change|update_health|vehicle_move)$/.test(event)) {
+            const self = bot.entity?.id;
+            if (packet.entityId === undefined || packet.entityId === self || event === "login") {
+                note(`in  ${event} ${fmt(packet)}`);
+            }
+        }
         switch (event) {
+            case "position":
+                teleports.set(packet.teleportId, packet);
+                if (teleports.size > 50) teleports.delete(teleports.keys().next().value);
+                break;
+            case "entity_update_attributes":
+                // physics adds its own sprint boost; drop the server's to avoid doubling it
+                for (const prop of packet.properties || []) {
+                    if (prop.modifiers) prop.modifiers = prop.modifiers.filter((m) => m.uuid !== "minecraft:sprinting");
+                }
+                break;
             case "map_chunk":
             case "update_light":
                 // Light masks are byte arrays now; mineflayer expects longs.
@@ -178,6 +237,21 @@ function patchBot(bot) {
         }
         return emit(event, packet, ...rest);
     };
+}
+
+// Short one-line form of a packet for the debug trace.
+function fmt(packet) {
+    const round = (v) => (typeof v === "number" && !Number.isInteger(v) ? Math.round(v * 1000) / 1000 : v);
+    const parts = [];
+    for (const [k, v] of Object.entries(packet || {})) {
+        if (v === undefined || Buffer.isBuffer(v) || k === "worldNames" || k === "worldState") continue;
+        if (v && typeof v === "object" && !Array.isArray(v) && Object.values(v).some((x) => typeof x === "boolean")) {
+            parts.push(`${k}=[${Object.keys(v).filter((f) => v[f] === true).join(",")}]`); // bit flags
+            continue;
+        }
+        parts.push(`${k}=${typeof v === "object" && v !== null ? JSON.stringify(v, (_, x) => round(x)) : round(v)}`);
+    }
+    return parts.join(" ").slice(0, 240);
 }
 
 // BitSet.toByteArray() bytes -> the [high, low] int32 pairs minecraft-protocol
