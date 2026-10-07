@@ -40,6 +40,7 @@ For a LAN world the port is printed in chat when you open it. The default
 npm start                                  # runs the tasks in config.json
 node gatherer.js oak_log:64 iron_pickaxe:1 # or pass tasks on the command line
 node gatherer.js --config other.json torch:32
+node gatherer.js --bot Miner               # only this bot from "bots" (or --bot Miner,Farmer)
 ```
 
 Use item names as they appear in `/give`: `raw_iron`, `iron_ingot`,

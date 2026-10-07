@@ -59,9 +59,12 @@ function parseTask(text) {
 function loadConfig(argv) {
     let configPath = path.join(__dirname, "..", "config.json");
     const cliTasks = [];
+    const only = [];
     for (let i = 0; i < argv.length; i++) {
         if (argv[i] === "--config") {
             configPath = path.resolve(argv[++i]);
+        } else if (argv[i] === "--bot") {
+            only.push(...argv[++i].split(",").map((n) => n.trim()).filter(Boolean));
         } else {
             cliTasks.push(parseTask(argv[i]));
         }
@@ -74,6 +77,7 @@ function loadConfig(argv) {
     }
     const config = { ...DEFAULTS, ...fileConfig };
     if (cliTasks.length > 0) config.tasks = cliTasks;
+    if (only.length > 0) config.only = only;
     return config;
 }
 
@@ -86,17 +90,29 @@ function finishBotConfig(config) {
 }
 
 // One settings object per bot: just the main config, or one per crew member
-// (shared settings + that member's overrides).
+// (shared settings + that member's overrides). "--bot Name" keeps only the
+// named members.
 function botConfigs(config) {
-    if (!Array.isArray(config.bots) || config.bots.length === 0) return [finishBotConfig(config)];
-    return config.bots.map((member, i) =>
+    const { only, ...shared } = config;
+    if (!Array.isArray(shared.bots) || shared.bots.length === 0) return [finishBotConfig(shared)];
+    let configs = shared.bots.map((member, i) =>
         finishBotConfig({
-            ...config,
+            ...shared,
             tasks: [], // crew tasks go in each member's own "tasks"
             ...member,
-            username: member.username || `${config.username}${i + 1}`,
+            username: member.username || `${shared.username}${i + 1}`,
         })
     );
+    if (only) {
+        const wanted = only.map((n) => n.toLowerCase());
+        const missing = only.filter((n) => !configs.some((c) => c.username.toLowerCase() === n.toLowerCase()));
+        if (missing.length > 0) {
+            const names = configs.map((c) => c.username).join(", ");
+            throw new Error(`No bot named ${missing.join(", ")} in config.json. Bots there: ${names}.`);
+        }
+        configs = configs.filter((c) => wanted.includes(c.username.toLowerCase()));
+    }
+    return configs;
 }
 
 module.exports = { DEFAULTS, loadConfig, botConfigs, parseTask };

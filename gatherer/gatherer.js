@@ -10,6 +10,7 @@
 //   node gatherer.js                          # uses config.json
 //   node gatherer.js oak_log:64 iron_pickaxe:1
 //   node gatherer.js --config other.json coal:16
+//   node gatherer.js --bot Miner              # just one bot from "bots"
 
 // Teach the Minecraft libraries about versions newer than they ship (26.3).
 require("./lib/compat").registerExtraVersions();
@@ -17,7 +18,13 @@ require("./lib/compat").registerExtraVersions();
 const { loadConfig, botConfigs } = require("./lib/config");
 
 const config = loadConfig(process.argv.slice(2));
-const configs = botConfigs(config);
+let configs;
+try {
+    configs = botConfigs(config);
+} catch (err) {
+    console.error(err.message);
+    process.exit(1);
+}
 
 if (configs.length > 1) {
     require("./lib/crew").startCrew(configs);
