@@ -132,6 +132,9 @@ function createBot(config, crew) {
         // Keep path computation bounded: per-tick budget and a hard timeout.
         const movements = new Movements(bot);
         movements.allowParkour = false;
+        // Its 1x1 tower places the block too early in the jump, which servers
+        // refuse (the bot is still in the way). climbTo in actions.js builds up instead.
+        movements.allow1by1towers = false;
         // Never dig through farms, chests, beds, doors, etc. on the way somewhere.
         for (const id of ctx.kb.neverBreakIds()) movements.blocksCantBreak.add(id);
         const modded = bot.registry.blocksByName.modded_block;

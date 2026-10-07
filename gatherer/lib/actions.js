@@ -52,6 +52,7 @@ function installActions(ctx) {
         let failedDigs = 0;
         let lastExplore = null;
         const skipped = new Set(); // blocks we could not reach or break
+        const climbed = new Set(); // blocks we already fetched dirt to build up to
         while (ctx.countItem(name) < target) {
             ctx.checkStop();
             await ctx.guard();
@@ -79,9 +80,10 @@ function installActions(ctx) {
             // Logs grow on the surface, so one far below is in a ravine or cave
             // and means digging down to it.
             const me = bot.entity.position;
-            const surface = /_(log|stem)$/.test(name);
+            // Dirt and sand: take it from the top rather than digging a pit.
+            const below = /_(log|stem)$/.test(name) ? 4 : /^(dirt|grass_block|sand|red_sand|gravel|clay)$/.test(name) ? 1 : null;
             const effort = (p) =>
-                p.distanceTo(me) + 3 * Math.max(0, p.y - me.y - 2) + (surface ? 3 * Math.max(0, me.y - p.y - 4) : 0);
+                p.distanceTo(me) + 3 * Math.max(0, p.y - me.y - 2) + (below === null ? 0 : 6 * Math.max(0, me.y - p.y - below));
             positions.sort((a, b) => effort(a) - effort(b));
             if (lastExplore) {
                 learn.reward(lastExplore.context, lastExplore.arm, positions.length > 0 ? 1 : 0);
@@ -103,15 +105,28 @@ function installActions(ctx) {
             const before = ctx.interrupts;
             let failure = null;
             try {
-                await bot.collectBlock.collect(block, { ignoreNoPath: true });
+                await harvest(block);
             } catch (err) {
                 failure = err.message;
             }
             ctx.checkStop();
             if (ctx.interrupts !== before) continue; // a mob showed up; try again
-            // collectBlock swallows path errors, so check whether the block is gone.
             if (!failure && bot.blockAt(block.position)?.type === block.type) {
                 failure = "unreachable";
+            }
+            // Out of reach overhead (the top of a tree whose trunk is gone, say):
+            // get some dirt, build a pillar up to it and break it from there.
+            const key = block.position.toString();
+            if (failure && !climbed.has(key) && block.position.y > bot.entity.position.y + 2) {
+                climbed.add(key);
+                try {
+                    await climbTo(block, seen);
+                    failure = bot.blockAt(block.position)?.type === block.type ? "couldn't reach it" : null;
+                } catch (err) {
+                    if (err instanceof ctx.Stopped || err instanceof ctx.Retry) throw err;
+                    failure = err.message;
+                }
+                if (ctx.interrupts !== before) continue;
             }
             if (failure) {
                 skipped.add(block.position.toString());
@@ -121,6 +136,196 @@ function installActions(ctx) {
             } else {
                 failedDigs = 0;
             }
+        }
+    }
+
+    // Blocks the pathfinder may place to climb or bridge.
+    function scaffoldCount() {
+        const ids = new Set(bot.pathfinder.movements.scafoldingBlocks);
+        return bot.inventory.items().reduce((sum, i) => sum + (ids.has(i.type) ? i.count : 0), 0);
+    }
+
+    // Walk to a block, break it and pick up what drops, never waiting forever:
+    // a drop that lands on leaves or out of reach is left behind.
+    async function harvest(block) {
+        const far = block.position.distanceTo(bot.entity.position);
+        await ctx.withTimeout(bot.pathfinder.goto(new goals.GoalLookAtBlock(block.position, bot.world)), 20000 + far * 1500);
+        const target = bot.blockAt(block.position);
+        if (!target || target.type !== block.type) return; // already gone
+        await bot.tool.equipForBlock(target, { requireHarvest: true });
+        if (!target.canHarvest(bot.heldItem?.type ?? null)) throw new Error("no tool that can harvest it");
+        try {
+            await ctx.withTimeout(bot.dig(target), target.digTime(bot.heldItem?.type ?? null) * 2 + 5000);
+        } catch (err) {
+            bot.stopDigging();
+            throw err;
+        }
+        await pickUpDrops(block.position);
+    }
+
+    // Pillar up with dirt until `block` is within reach, then break it.
+    async function climbTo(block, seen) {
+        const reach = () => bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0).distanceTo(block.position.offset(0.5, 0.5, 0.5));
+        const needed = Math.min(20, Math.ceil(block.position.y - bot.entity.position.y));
+        if (scaffoldCount() < needed) {
+            ctx.log(`Can't reach the ${block.name} at ${ctx.fmt(block.position)}; getting dirt to build up to it.`);
+            await obtain("dirt", ctx.countItem("dirt") + needed - scaffoldCount(), seen);
+        }
+        // Stand under it, or as close as the ground allows.
+        const p = block.position;
+        await ctx.withTimeout(bot.pathfinder.goto(new goals.GoalNearXZ(p.x, p.z, 1)), 30000);
+        ctx.log(`Building up to the ${block.name} at ${ctx.fmt(p)}.`);
+        const pillar = [];
+        try {
+            await buildUp(block, reach, pillar);
+            const target = bot.blockAt(p);
+            if (target && target.type === block.type) {
+                await bot.tool.equipForBlock(target, { requireHarvest: true });
+                await ctx.withTimeout(bot.dig(target), target.digTime(bot.heldItem?.type ?? null) * 2 + 5000);
+            }
+            await digInReach(block.type);
+            await shakeDownDrops();
+        } finally {
+            await climbDown(pillar).catch(() => {});
+        }
+        await pickUpDrops(p);
+    }
+
+    async function buildUp(block, reach, pillar) {
+        const p = block.position;
+        for (let step = 0; step < 24 && reach() > 4; step++) {
+            ctx.checkStop();
+            const feet = bot.entity.position.floored();
+            // Clear leaves (or anything else) above our head first.
+            const overhead = bot.blockAt(feet.offset(0, 2, 0));
+            if (overhead && overhead.boundingBox === "block") {
+                if (overhead.position.equals(p)) break; // that's the target: in reach now
+                if (!overhead.diggable || ctx.kb.neverBreakIds().includes(overhead.type)) throw new Error("something unbreakable overhead");
+                await bot.tool.equipForBlock(overhead, {});
+                await bot.dig(overhead);
+                continue;
+            }
+            await pillarStep(feet);
+            pillar.push(feet);
+        }
+        if (reach() > 4.5) throw new Error("couldn't build up to it");
+    }
+
+    // While up there, break any more of the same block within reach (the rest
+    // of the treetop).
+    async function digInReach(type) {
+        for (let i = 0; i < 12; i++) {
+            ctx.checkStop();
+            const eye = bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0);
+            const next = bot
+                .findBlocks({ matching: type, maxDistance: 6, count: 20 })
+                .filter((pos) => eye.distanceTo(pos.offset(0.5, 0.5, 0.5)) <= 4.3)
+                .map((pos) => bot.blockAt(pos))[0];
+            if (!next) return;
+            await bot.tool.equipForBlock(next, { requireHarvest: true });
+            await ctx.withTimeout(bot.dig(next), next.digTime(bot.heldItem?.type ?? null) * 2 + 5000);
+        }
+    }
+
+    // Drops from a treetop often land on the leaves below, out of reach from the
+    // ground. Break the leaves under them (from up here) so they fall.
+    async function shakeDownDrops() {
+        await ctx.wait(500); // let the drops appear
+        for (let i = 0; i < 8; i++) {
+            ctx.checkStop();
+            const eye = bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0);
+            const under = Object.values(bot.entities)
+                .filter((e) => e.name === "item" && e.isValid !== false && e.position.distanceTo(eye) < 6)
+                .map((e) => bot.blockAt(e.position.offset(0, -0.3, 0).floored()))
+                .find((b) => b && /_leaves$/.test(b.name) && eye.distanceTo(b.position.offset(0.5, 0.5, 0.5)) <= 4.3);
+            if (!under) return;
+            await bot.tool.equipForBlock(under, {});
+            await ctx.withTimeout(bot.dig(under), 5000);
+            await ctx.wait(500); // let it fall
+        }
+    }
+
+    // Dig the pillar away from the top, landing on each block below in turn;
+    // the dirt drops where we land, so it's picked up on the way.
+    async function climbDown(pillar) {
+        while (pillar.length) {
+            const top = pillar.pop();
+            if (!bot.entity.position.floored().offset(0, -1, 0).equals(top)) return; // moved off it
+            const b = bot.blockAt(top);
+            if (!b || b.boundingBox !== "block") return;
+            await bot.tool.equipForBlock(b, {});
+            await ctx.withTimeout(bot.dig(b), 6000);
+            await waitUntil(() => bot.entity.onGround && bot.entity.position.y < top.y + 0.5, 2000);
+        }
+    }
+
+    // Jump, and once our feet are above the block we stood on, put dirt there.
+    async function pillarStep(feet) {
+        const ids = new Set(bot.pathfinder.movements.scafoldingBlocks);
+        const item = bot.inventory.items().find((i) => ids.has(i.type));
+        if (!item) throw new Error("out of dirt");
+        await bot.equip(item, "hand");
+        const ground = bot.blockAt(feet.offset(0, -1, 0));
+        if (!ground || ground.boundingBox !== "block") throw new Error("nothing solid to build on");
+        await bot.look(bot.entity.yaw, -Math.PI / 2, true);
+        // The server refuses a block that would overlap us, so place it near the
+        // top of the jump, once the server has seen our feet clear of it.
+        for (let attempt = 0; attempt < 3; attempt++) {
+            await waitUntil(() => bot.entity.onGround, 1500);
+            bot.setControlState("jump", true);
+            const risen = await waitUntil(() => bot.entity.position.y > feet.y + 1.15, 1500);
+            bot.setControlState("jump", false);
+            if (!risen) throw new Error("couldn't jump");
+            await waitTicks(2);
+            try {
+                await bot.placeBlock(ground, new Vec3(0, 1, 0));
+            } catch (err) {
+                // refused or not confirmed; check below and try again
+            }
+            await waitUntil(() => bot.entity.onGround, 1500);
+            if (bot.entity.position.y > feet.y + 0.9) return;
+        }
+        throw new Error("the server didn't let me place blocks");
+    }
+
+    async function waitTicks(n) {
+        for (let i = 0; i < n; i++) await new Promise((resolve) => bot.once("physicsTick", resolve));
+    }
+
+    function waitUntil(test, ms) {
+        return new Promise((resolve) => {
+            if (test()) return resolve(true);
+            const start = Date.now();
+            const check = () => {
+                if (test()) done(true);
+                else if (Date.now() - start > ms) done(false);
+            };
+            const done = (result) => {
+                bot.removeListener("physicsTick", check);
+                resolve(result);
+            };
+            bot.on("physicsTick", check);
+        });
+    }
+
+    async function pickUpDrops(pos) {
+        const deadline = Date.now() + 8000;
+        await ctx.wait(400); // let the drop spawn and land
+        while (Date.now() < deadline) {
+            ctx.checkStop();
+            const me = bot.entity.position;
+            const drop = Object.values(bot.entities)
+                // drops fall, so look below the block too
+                .filter((e) => e.name === "item" && e.isValid !== false && Math.hypot(e.position.x - pos.x - 0.5, e.position.z - pos.z - 0.5) < 5 && Math.abs(e.position.y - pos.y) < 12)
+                .sort((a, b) => a.position.distanceTo(me) - b.position.distanceTo(me))[0];
+            if (!drop) return;
+            const p = drop.position;
+            try {
+                await ctx.withTimeout(bot.pathfinder.goto(new goals.GoalNear(p.x, p.y, p.z, 1)), Math.max(500, deadline - Date.now()));
+            } catch (err) {
+                return; // can't get to it
+            }
+            await ctx.wait(300);
         }
     }
 

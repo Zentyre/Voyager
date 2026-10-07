@@ -163,7 +163,7 @@ coordinate. Each keeps its own memory file (`memory/<username>.json`) either way
 
 | Ability    | How                                                                                       |
 |------------|-------------------------------------------------------------------------------------------|
-| **Mine**   | Finds the nearest natural block that drops the item, digs to it, and picks up the drop. Goes back to places it remembers, or explores. |
+| **Mine**   | Finds the nearest natural block that drops the item, digs to it, and picks up the drop. Goes back to places it remembers, or explores. Prefers blocks near its own height. For one out of reach overhead (a treetop), it gets dirt, builds a pillar up, takes what's in reach, knocks drops off the leaves, and digs the pillar back down. Gives up on any block after a time limit and moves on. |
 | **Craft**  | Uses the game's recipe list. Gathers ingredients recursively and places a crafting table if none is nearby. |
 | **Tools**  | If a block needs a better pickaxe than it has, it makes one first (wood → stone → iron). |
 | **Smelt**  | Ores, sand → glass, cobblestone → stone, logs → charcoal, raw meat → cooked, etc. Builds a furnace and collects fuel (coal or planks) if needed. |
