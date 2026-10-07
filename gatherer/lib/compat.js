@@ -4,8 +4,8 @@
 // 26.3: the data in compat/26.3/ (built by compat/build-26.3.js from public
 // sources) is registered with minecraft-data, and patchBot() adapts the few
 // places where mineflayer itself sends or reads packets whose meaning changed
-// in 26.2/26.3 (teleport confirmation, digging action codes, arm swing, light masks,
-// entity movement, signs, particles).
+// in 26.2/26.3 (teleport confirmation, digging action codes, sprint/wake action
+// codes, arm swing, light masks, entity movement, signs, particles).
 
 const path = require("path");
 
@@ -191,20 +191,52 @@ function patchBot(bot) {
                 // Swinging is now "punch", main hand only.
                 if (!params.hand) return write("punch", {});
                 return undefined;
+            case "entity_action":
+                // Mineflayer still sends the pre-1.21.6 numbers (3/4 sprint, 2 wake),
+                // which 26.3 reads as horse jumps and stop sprinting.
+                if (typeof params.actionId === "number") {
+                    const actionId = { 2: "leave_bed", 3: "start_sprinting", 4: "stop_sprinting", 8: "start_elytra_flying" }[params.actionId];
+                    if (!actionId) return undefined;
+                    params = { ...params, actionId };
+                }
+                note(`out ${name} ${fmt(params)}`);
+                return write(name, params);
             case "update_sign": {
                 const { isFrontText, ...rest } = params;
                 return write(name, { ...rest, textSlot: isFrontText === false ? 0 : 1 });
             }
             default:
-                if (/^(player_input|player_loaded|use_entity|entity_action|abilities)$/.test(name)) {
+                if (/^(player_input|player_loaded|use_entity|abilities)$/.test(name)) {
                     note(`out ${name} ${fmt(params)}`);
                 }
                 return write(name, params);
         }
     };
 
-    const emit = client.emit.bind(client);
-    client.emit = (event, packet, ...rest) => {
+    // An exception thrown while handling a packet leaves minecraft-protocol's
+    // packet parser stuck mid-packet: nothing more is read, the bot stops
+    // answering keep-alives and times out 30 seconds later. So each listener of
+    // a packet runs on its own; a failure is reported with the packet's name and
+    // the rest carry on.
+    const originalEmit = client.emit.bind(client);
+    const reported = new Set();
+    const emit = (event, packet, meta, ...rest) => {
+        if (!meta || typeof meta !== "object" || typeof meta.name !== "string") return originalEmit(event, packet, meta, ...rest);
+        const listeners = client.rawListeners(event);
+        for (const listener of listeners) {
+            try {
+                listener.call(client, packet, meta, ...rest);
+            } catch (err) {
+                const key = `${meta.name} ${err.message}`;
+                if (reported.has(key)) continue;
+                reported.add(key);
+                const where = (err.stack || "").split("\n").slice(1, 6).join("\n");
+                console.log(`[${bot.username}] Error handling the server's ${meta.name} packet (ignored): ${err.message}\n${where}`);
+            }
+        }
+        return listeners.length > 0;
+    };
+    const translate = (event, packet, ...rest) => {
         if (!is26_3(bot) || !packet || typeof packet !== "object") return emit(event, packet, ...rest);
         if (/^(position|player_rotation|respawn|login|explosion|entity_velocity|entity_teleport|sync_entity_position|game_state_change|update_health|vehicle_move)$/.test(event)) {
             const self = bot.entity?.id;
@@ -256,7 +288,7 @@ function patchBot(bot) {
                 packet.animation = { 0: 2, 1: 4, 2: 5 }[packet.animation] ?? packet.animation;
                 break;
             case "swing_animation":
-                emit("animation", { entityId: packet.entityId, animation: packet.hand === 1 ? 3 : 0 });
+                emit("animation", { entityId: packet.entityId, animation: packet.hand === 1 ? 3 : 0 }, { ...rest[0], name: "animation" });
                 break;
             case "open_sign_entity":
                 packet.isFrontText = packet.textSlot !== 0;
@@ -267,6 +299,7 @@ function patchBot(bot) {
         }
         return emit(event, packet, ...rest);
     };
+    client.emit = translate;
 }
 
 // Short one-line form of a packet for the debug trace.

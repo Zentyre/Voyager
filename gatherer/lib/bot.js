@@ -24,6 +24,23 @@ const { installArchery } = require("./archery");
 const { installBodyguard } = require("./bodyguard");
 const { patchBot } = require("./compat");
 
+// bot.findBlocks skips chunk sections whose palette lacks the block, but a
+// section made of one block (all air, say) has no palette, so it checked all
+// 4096 positions of each one: searching for something not nearby froze the bot
+// for over a second. Give those sections a one-entry palette.
+try {
+    const { SingleValueContainer } = require("prismarine-chunk/src/pc/common/PaletteContainer");
+    if (!("palette" in SingleValueContainer.prototype)) {
+        Object.defineProperty(SingleValueContainer.prototype, "palette", {
+            get() {
+                return [this.value];
+            },
+        });
+    }
+} catch (err) {
+    // a newer prismarine-chunk laid out differently: searches are just slower
+}
+
 const ARMOR_PIECES = ["helmet", "chestplate", "leggings", "boots"];
 const GEAR = /_(pickaxe|axe|shovel|hoe|sword|helmet|chestplate|leggings|boots)$|^(bow|shield|arrow|spectral_arrow|tipped_arrow|bucket|water_bucket)$/;
 
