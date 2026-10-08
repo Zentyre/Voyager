@@ -253,6 +253,25 @@ function createPlanner(ctx) {
         return best(name, 0, seen, target);
     }
 
+    // Everything getting `qty` of `item` takes, all the way down, as item ->
+    // count: a diamond chestplate is 8 diamonds; 3 iron ingots are 3 raw
+    // iron. Only what isn't in the bag already. Stations and fuel left out.
+    function requirements(item, qty, out = new Map(), seen = new Set(), depth = 0) {
+        if (depth === 0) startSession();
+        const missing = qty - ctx.countItem(item);
+        if (missing <= 0 || depth > MAX_DEPTH || seen.has(item)) return out;
+        out.set(item, (out.get(item) || 0) + missing);
+        const p = best(item, depth, seen, qty);
+        const path = new Set(seen).add(item);
+        if (p.type === "craft") {
+            const times = Math.ceil(missing / (p.recipe.result?.count || 1));
+            for (const ing of p.ingredients) requirements(ing.name, ing.count * times, out, path, depth + 1);
+        } else if (p.type === "smelt") {
+            requirements(p.input, missing, out, path, depth + 1);
+        }
+        return out;
+    }
+
     // `seen`: what we're already in the middle of getting, so the tool can't be
     // planned from it (an iron pickaxe made from the raw iron being mined).
     function toolFor(blocks, seen = new Set()) {
@@ -315,7 +334,7 @@ function createPlanner(ctx) {
         return lines;
     }
 
-    return { plan, cheapestOf, toolFor, explain };
+    return { plan, cheapestOf, toolFor, explain, requirements };
 }
 
 module.exports = { createPlanner };

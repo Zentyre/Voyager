@@ -19,6 +19,20 @@ function installActions(ctx) {
         if (!bot.registry.itemsByName[name]) throw new Error(`unknown item ${name}`);
         const next = new Set(seen).add(name);
         const plan = planner.plan(name, seen, target);
+        // Going out for something (mining, hunting, farming, smelting)? Get what
+        // the tasks after this one need of it too, as far as the bag allows:
+        // one trip down for the 24 diamonds of a diamond armor set, not four.
+        const later = ctx.ahead?.get(name) || 0;
+        if (later > 0 && ["mine", "hunt", "farm", "smelt"].includes(plan.type)) {
+            const stack = bot.registry.itemsByName[name].stackSize || 64;
+            const room = Math.max(0, bot.inventory.emptySlotCount() - 2) * stack;
+            const extra = Math.min(later, room);
+            if (extra > 0) {
+                ctx.log(`Getting ${extra} more ${name} while I'm at it, for the tasks after this one.`);
+                target += extra;
+                ctx.ahead.set(name, later - extra);
+            }
+        }
         const missing = target - ctx.countItem(name);
         ctx.log(`Need ${missing} more ${name}: ${plan.type}`);
         if (plan.type === "none") throw new Error(`I don't know how to get ${name}`);

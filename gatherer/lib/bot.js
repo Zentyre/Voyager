@@ -277,6 +277,7 @@ function createBot(config, crew, reporter) {
                 replyTo = task.replyTo || null;
                 ctx.replyTo = replyTo; // a task asked for by /msg reports by /msg
                 ctx.current = { ...task, startCount: ctx.countItem(task.item), deposited: 0 };
+                ctx.ahead = needsAhead();
                 try {
                     await runTask(ctx.current);
                 } catch (err) {
@@ -284,6 +285,7 @@ function createBot(config, crew, reporter) {
                     ctx.tell(task.replyTo, `Couldn't get ${task.item}: ${err.message}`);
                 } finally {
                     ctx.current = null;
+                    ctx.ahead = null;
                 }
             }
             if (config.chest) await ctx.safely(ctx.depositAll);
@@ -298,6 +300,22 @@ function createBot(config, crew, reporter) {
             setBusy(false);
             ctx.stopRequested = false;
         }
+    }
+
+    // What the tasks still waiting will need, all the way down (item -> count),
+    // so gathering for this one can get theirs on the same trip. Not a task's
+    // own item: "get 2 oak_log" wants 2 new ones, whatever is in the bag.
+    function needsAhead() {
+        const total = new Map();
+        for (const t of ctx.queue) {
+            try {
+                const needs = ctx.planner.requirements(t.item, t.count + ctx.countItem(t.item));
+                for (const [item, n] of needs) if (item !== t.item) total.set(item, (total.get(item) || 0) + n);
+            } catch (err) {
+                // can't plan that one yet; it'll get its own trip
+            }
+        }
+        return total;
     }
 
     // The pathfinder places dirt/cobblestone to climb and bridge. Don't let it
