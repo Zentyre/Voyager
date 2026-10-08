@@ -1,6 +1,8 @@
 // Staying alive between and during tasks: react to mobs, put out fire, eat
 // (finding food if there is none), and sleep through the night.
 
+const { goals } = require("mineflayer-pathfinder");
+
 const GOOD_IN_A_PINCH = ["enchanted_golden_apple", "golden_apple"];
 
 function installSurvival(ctx) {
@@ -21,10 +23,12 @@ function installSurvival(ctx) {
         if (!ctx.isHostile(entity) || kb.DONT_PROVOKE.has(entity.name)) return false;
         if ((ignoreUntil.get(entity.id) || 0) > Date.now()) return false;
         const me = bot.entity.position;
-        return (
-            entity.position.distanceTo(me) <= config.defendRadius &&
-            Math.abs(entity.position.y - me.y) < 4
-        );
+        // Creepers get noticed sooner (running needs a head start), and from
+        // further above or below: one at the edge of the pit the bot is
+        // digging in still blows it up.
+        const flee = kb.FLEE_FROM.has(entity.name);
+        const radius = flee ? Math.max(config.defendRadius, 12) : config.defendRadius;
+        return entity.position.distanceTo(me) <= radius && Math.abs(entity.position.y - me.y) < (flee ? 7 : 4);
     }
 
     // Closest threat, with archers and creepers dealt with first.
@@ -150,8 +154,8 @@ function installSurvival(ctx) {
 
         sleeping = true;
         try {
-            await ctx.act(() => ctx.goTo(bed.position, 2, "the bed"));
-            await bot.sleep(bed);
+            const half = await ctx.act(() => reachBed(bed));
+            await bot.sleep(half);
             ctx.say("Sleeping.");
             learn.remember("block", bed.name, bed.position);
             await ctx.during("Sleeping", () => new Promise((resolve) => {
@@ -168,6 +172,28 @@ function installSurvival(ctx) {
         } finally {
             sleeping = false;
         }
+    }
+
+    // Stand where one half of the bed can be seen, and return that half. Being
+    // close isn't enough: from behind a wall the click lands on the wall, and
+    // the bot kept trying from there.
+    async function reachBed(bed) {
+        const halves = [bed, ...[[1, 0], [-1, 0], [0, 1], [0, -1]]
+            .map(([dx, dz]) => bot.blockAt(bed.position.offset(dx, 0, dz)))
+            .filter((b) => b && b.name === bed.name)];
+        let lastError = null;
+        for (const half of halves) {
+            const goal = new goals.GoalLookAtBlock(half.position, bot.world, { reach: 3 });
+            const before = ctx.interrupts;
+            try {
+                await ctx.during("Walking to the bed", () => ctx.withTimeout(bot.pathfinder.goto(goal), 30000));
+                return half;
+            } catch (err) {
+                if (err instanceof ctx.Stopped || ctx.interrupts !== before) throw err; // a mob: deal with it, then retry
+                lastError = err; // walled in on this side: try the other half
+            }
+        }
+        throw new Error(`can't get to the bed (${lastError?.message || "no way there"})`);
     }
 
     async function maybeSleep() {
@@ -197,8 +223,9 @@ function installSurvival(ctx) {
                 await ctx.fight(mob);
             } finally {
                 fighting = false;
-                // Don't keep chasing something we couldn't reach or had to run from.
-                if (mob.isValid) ignoreUntil.set(mob.id, Date.now() + 20000);
+                // Don't keep chasing something we couldn't reach. Something we ran
+                // from (a creeper) stays a threat, so we run again if it follows.
+                if (mob.isValid && !ctx.ranFrom?.(mob)) ignoreUntil.set(mob.id, Date.now() + 20000);
             }
         }
         if (!seekingFood) await maybeEat();
