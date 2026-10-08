@@ -21,6 +21,15 @@ const path = require("path");
 // Default seconds per item for each method, used before anything is learned.
 const DEFAULT_SECONDS = { mine: 10, craft: 2, smelt: 12, hunt: 30, farm: 60, breed: 30, brew: 60 };
 const EMA = 0.3; // weight of the newest sample
+// Wood types are the same job: how long an oak log took depends on the tree
+// (tall, half cut, mobs around), not on it being oak. Kept apart, a few slow
+// oak logs made never-tried acacia look cheaper, and the bot walked past
+// oak trees to an acacia one. So they share one record.
+const WOOD = /^(stripped_)?(oak|spruce|birch|jungle|acacia|dark_oak|mangrove|cherry|pale_oak|crimson|warped|bamboo)_(log|wood|planks|stem|hyphae|block)$/;
+function methodKey(type, item) {
+    const wood = WOOD.exec(item);
+    return `${type}:${wood ? `${wood[1] || ""}any_${wood[3]}` : item}`;
+}
 const DANGER_HALF_LIFE_MS = 24 * 3600 * 1000;
 const UNREACHABLE_MS = 6 * 3600 * 1000;
 const MAX_PLACES_PER_NAME = 60;
@@ -44,6 +53,24 @@ function createLearning(ctx) {
     mem.danger = mem.danger || [];
     let dirty = false;
 
+    // Records kept per wood type before they were shared: fold them into the
+    // shared one (counts add up, times average over the successes).
+    for (const [key, m] of Object.entries(mem.methods)) {
+        const [type, ...rest] = key.split(":");
+        const shared = methodKey(type, rest.join(":"));
+        if (shared === key) continue;
+        const into = (mem.methods[shared] = mem.methods[shared] || { n: 0, ok: 0, secondsPerUnit: null });
+        if (m.secondsPerUnit !== null && m.ok > 0) {
+            into.secondsPerUnit = into.secondsPerUnit === null
+                ? m.secondsPerUnit
+                : (into.secondsPerUnit * into.ok + m.secondsPerUnit * m.ok) / (into.ok + m.ok);
+        }
+        into.n += m.n;
+        into.ok += m.ok;
+        delete mem.methods[key];
+        dirty = true;
+    }
+
     function dimension() {
         return String(bot.game?.dimension || "overworld").replace("minecraft:", "");
     }
@@ -64,7 +91,7 @@ function createLearning(ctx) {
             if (success === null || config.learn === false) return;
             // Only time spent on this step itself, not on its ingredients.
             const perUnit = Math.max(0, elapsed - frame.child) / 1000 / Math.max(1, units);
-            recordMethod(`${type}:${item}`, Boolean(success), perUnit);
+            recordMethod(methodKey(type, item), Boolean(success), perUnit);
         };
     }
 
@@ -80,7 +107,7 @@ function createLearning(ctx) {
 
     // Multiplier for the planner's base cost of a method, plus a failure penalty.
     function costAdjust(type, item, base) {
-        const m = mem.methods[`${type}:${item}`];
+        const m = mem.methods[methodKey(type, item)];
         if (!m || config.learn === false) return base;
         const successRate = (m.ok + 1) / (m.n + 1); // 1.0 until something fails
         let factor = 1;
