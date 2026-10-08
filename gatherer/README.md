@@ -264,13 +264,19 @@ It's plain statistics, saved to `memory.json` (one section per server):
 
 | What it learns | How it uses it |
 |----------------|----------------|
-| **How long and how reliably each method works.** It times every mine, craft, smelt, farm, hunt, breed and brew, per item, and counts failures. | The planner swaps its built-in cost guesses for real ones. If mining iron keeps failing around here, it gets "expensive" and other options win. |
+| **How long and how reliably mining, hunting and farming work.** It times each one per item (all wood types together) and counts failures. | The planner swaps its built-in cost guesses for real ones. If mining iron keeps failing around here, it gets "expensive" and other options win. |
 | **Where things are.** Every ~45 s it notes ores, logs, sand, clay, water, beds, stations and animals nearby, and anything it mines or hunts. | When nothing is in sight, it heads back to the nearest remembered spot instead of wandering. If the spot is empty, it forgets it. The planner also treats remembered resources as cheaper. |
 | **Which way to explore.** When it has to wander, it picks one of 8 compass directions per item and area. | Directions that led to the resource score higher. It picks with UCB1: mostly the best so far, sometimes another to check. |
 | **How to fight each mob.** Styles are `crit` (jump attacks), `fast` (swing on cooldown), `kite` (hit and step back) and `bow` (when it has one). Each is scored per mob and per weapon (fist, sword, axe, with or without a bow) by whether it won and how much damage it took. | Each new fight against that mob uses the best style so far (UCB1 again), so it settles on what works for your setup. |
 | **Its own aim.** After each arrow it watches where the arrow actually flew, and how far above or below the target it passed. | It keeps a running correction for each distance (0–10, 10–20, 20–30, 30–40, 40+ blocks) and aims that much lower or higher next time. `!learned` shows the corrections and the hit rate. |
 | **Danger.** Where it died or took big damage (fades over a day). | It won't explore towards dangerous areas. |
 | **Unreachable blocks.** Spots the pathfinder couldn't get to. | Skips them for 6 hours instead of retrying every time. |
+
+**Crafting and smelting have no memory.** Which recipe to use is worked out
+fresh each time from what's in its bag and what's around it: each recipe costs
+what's still missing (4 planks in the bag make a crafting table free; 1 of the
+4 still means fetching wood, from the nearest tree of any kind), and getting
+the rest costs by distance.
 
 `!learned` shows a summary and `!forget` wipes it. Set `"learn": false` to turn
 learning off.
