@@ -77,7 +77,11 @@ computer. You get a card per bot with:
 - health, food, position (click to copy), what it's holding and wearing, inventory;
 - the current task with a progress bar, and the queue;
 - a "Get item" box with item-name suggestions, and buttons for status,
-  inventory, eat, sleep, home, deposit, armor and stop.
+  inventory, eat, sleep, home, deposit, armor and stop;
+- **All commands** (opens under the card): a button for every command, with
+  dropdowns and boxes for the ones that take options (plan, plant, breed,
+  brew, armor set, guard, bow, give, say). "Come to me", "Give me" and
+  "Guard" with no name act on the owner.
 
 The bar at the top sends any command (the same ones as in chat, without the
 `!`) to one bot, all bots, or the crew (which splits gathering jobs). The

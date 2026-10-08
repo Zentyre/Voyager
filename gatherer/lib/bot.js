@@ -392,6 +392,9 @@ function createBot(config, crew, reporter) {
         const say = privately ? (message) => ctx.tell(fromPlayer, message) : fromPlayer ? ctx.sayPublic : ctx.say;
         // Activities started by /msg report by /msg the whole time they run.
         const runExclusive = (label, fn) => runActivity(label, fn, privately ? fromPlayer : null);
+        // come/give/guard act on whoever asked; from the dashboard or terminal, the owner.
+        const requester = fromPlayer || config.owner || null;
+        const cantSee = () => (fromPlayer ? "I can't see you." : `I can't see ${requester || "the owner"}.`);
         const chatOut = (line) => (privately ? bot.whisper(fromPlayer, line) : bot.chat(line));
         const [cmd, ...args] = text.trim().split(/\s+/);
         switch ((cmd || "").toLowerCase()) {
@@ -482,7 +485,7 @@ function createBot(config, crew, reporter) {
             case "bodyguard":
             case "protect": {
                 // Player names are case-sensitive in the game; match them however they were typed.
-                const typed = (args[0] || fromPlayer || "").replace(/[^A-Za-z0-9_]/g, "");
+                const typed = (args[0] || requester || "").replace(/[^A-Za-z0-9_]/g, "");
                 if (!typed) return say(`Usage: ${config.commandPrefix}guard <player>`);
                 const name = Object.keys(bot.players).find((n) => n.toLowerCase() === typed.toLowerCase()) || typed;
                 if (name === bot.username) return say("I can't guard myself.");
@@ -520,8 +523,8 @@ function createBot(config, crew, reporter) {
             }
             case "give":
             case "drop": {
-                const player = fromPlayer && bot.players[fromPlayer]?.entity;
-                if (!player) return broadcast ? undefined : say("I can't see you.");
+                const player = requester && bot.players[requester]?.entity;
+                if (!player) return broadcast ? undefined : say(cantSee());
                 const what = args[0] || "all";
                 const count = args[1] ? parseInt(args[1], 10) : Infinity;
                 const has = what === "all" ? bot.inventory.items().some((i) => !GEAR.test(i.name)) : ctx.countItem(what) > 0;
@@ -558,8 +561,8 @@ function createBot(config, crew, reporter) {
                 await ctx.safely(ctx.eat);
                 break;
             case "come": {
-                const player = fromPlayer && bot.players[fromPlayer]?.entity;
-                if (!player) return broadcast ? undefined : say("I can't see you.");
+                const player = requester && bot.players[requester]?.entity;
+                if (!player) return broadcast ? undefined : say(cantSee());
                 await runExclusive("come", () => ctx.goTo(player.position, 2));
                 break;
             }

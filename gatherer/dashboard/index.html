@@ -138,6 +138,17 @@ aside .head button { padding: 5px 10px; font-size: 13px; }
 #log .b { font-weight: 600; }
 #log .row.you .b { color: var(--info); }
 #log .row.bad .msg { color: var(--bad); }
+details.more { border-top: 1px solid var(--line); padding-top: 8px; }
+details.more > summary { font-weight: 600; color: var(--text); }
+.cmdgroup { margin-top: 10px; }
+.cmdgroup h4 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.cmdgroup .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.cmdgroup .btns button { padding: 5px 9px; font-size: 13px; }
+form.opt { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+form.opt > span { width: 74px; font-size: 13px; color: var(--muted); }
+form.opt input, form.opt select { padding: 5px 8px; font-size: 13px; flex: 1 1 90px; }
+form.opt input[type=number] { flex: 0 0 64px; }
+form.opt button { padding: 5px 10px; font-size: 13px; }
 .manage { display: none; gap: 6px; flex-wrap: wrap; }
 body.managed .manage { display: flex; }
 .power { margin-left: 4px; padding: 3px 10px; font-size: 12px; display: none; }
@@ -244,6 +255,46 @@ $("#cmdForm").addEventListener("submit", (e) => {
 // ---------- bot cards ----------
 const QUICK = [["status", "Status"], ["inv", "Inventory"], ["eat", "Eat"], ["sleep", "Sleep"], ["home", "Home"], ["deposit", "Deposit"], ["armor", "Armor"]];
 
+// Every command, for the "All commands" panel under each bot.
+const SIMPLE = [
+  ["Info", [["status", "Status"], ["queue", "Queue"], ["inv", "Inventory"], ["learned", "What it learned"], ["help", "Help"]]],
+  ["Actions", [["come", "Come to me"], ["eat", "Eat"], ["sleep", "Sleep"], ["home", "Go home"], ["deposit", "Deposit in chest"],
+    ["farm", "Harvest & replant"], ["water", "Place water"], ["bucket", "Fill a bucket"], ["armor", "Wear best armor"]]],
+];
+const sel = (name, options, label) => `<select name="${name}" aria-label="${label}">${options.map((o) => `<option value="${o}">${pretty(o) || "normal"}</option>`).join("")}</select>`;
+const POTIONS = ["awkward", "healing", "swiftness", "strength", "night_vision", "fire_resistance", "regeneration", "water_breathing", "leaping", "slow_falling", "poison", "turtle_master", "weakness", "invisibility", "harming", "slowness"];
+// [label, command template, fields html]; {field} placeholders, empty ones are dropped.
+const OPTIONS = [
+  ["Plan", "plan {item}", `<input name="item" list="items" placeholder="item, e.g. iron_pickaxe" aria-label="Item">`],
+  ["Plant", "plant {crop} {plots}", sel("crop", ["wheat", "carrot", "potato", "beetroot"], "Crop") + `<input name="plots" type="number" min="1" value="9" aria-label="Plots">`],
+  ["Breed", "breed {animal} {pairs}", sel("animal", ["cow", "sheep", "pig", "chicken", "goat", "rabbit", "mooshroom"], "Animal") + `<input name="pairs" type="number" min="1" value="1" aria-label="Pairs">`],
+  ["Brew", "brew {potion} {count} {mod}", sel("potion", POTIONS, "Potion") + `<input name="count" type="number" min="1" value="3" aria-label="How many">` + sel("mod", ["", "long", "strong", "splash", "lingering"], "Modifier")],
+  ["Armor set", "armor {material}", sel("material", ["leather", "golden", "iron", "diamond"], "Material")],
+  ["Guard", "guard {player}", `<input name="player" placeholder="player (empty = you)" aria-label="Player">`],
+  ["Bow", "bow {arrows}", `<input name="arrows" type="number" min="1" value="16" aria-label="Arrows">`],
+  ["Give me", "give {item} {count}", `<input name="item" list="items" placeholder="item, or all" aria-label="Item">` + `<input name="count" type="number" min="1" placeholder="all" aria-label="How many">`],
+  ["Say", "say {text}", `<input name="text" placeholder="message for chat" aria-label="Message">`],
+];
+const CAREFUL = [["stop", "Stop", false], ["forget", "Forget everything learned", true], ["quit", "Disconnect", true]];
+
+function commandsPanel() {
+  const groups = SIMPLE.map(([title, list]) =>
+    `<div class="cmdgroup"><h4>${title}</h4><div class="btns">${list.map(([c, t]) => `<button type="button" data-cmd="${c}">${t}</button>`).join("")}</div></div>`).join("");
+  const forms = OPTIONS.map(([label, tpl, fields]) =>
+    `<form class="opt" data-tpl="${tpl}" autocomplete="off"><span>${label}</span>${fields}<button class="primary">${label.split(" ")[0]}</button></form>`).join("");
+  const careful = CAREFUL.map(([c, t, ask]) => `<button type="button" class="danger" data-cmd="${c}"${ask ? ' data-confirm="1"' : ""}>${t}</button>`).join("");
+  return `<details class="more"><summary>All commands</summary>${groups}<div class="cmdgroup"><h4>With options</h4>${forms}</div><div class="cmdgroup"><h4>Careful</h4><div class="btns">${careful}</div></div></details>`;
+}
+
+// "brew {potion} {count} {mod}" + the form's values -> "brew healing 3 splash"
+function fillTemplate(tpl, form) {
+  return tpl.replace(/\{(\w+)\}/g, (_, name) => {
+    // (not form.elements[name]: elements.item is a built-in method, not the "item" field)
+    const v = String(form.querySelector(`[name="${name}"]`)?.value ?? "").trim();
+    return name === "text" ? v : v.toLowerCase().replace(/\s+/g, "_");
+  }).replace(/\s+/g, " ").trim();
+}
+
 function makeCard(label) {
   const card = document.createElement("article");
   card.className = "card";
@@ -268,7 +319,8 @@ function makeCard(label) {
       <input name="count" type="number" min="1" value="16" aria-label="How many">
       <button class="primary">Get</button>
     </form>
-    <div class="actions">${QUICK.map(([c, t]) => `<button type="button" data-cmd="${c}">${t}</button>`).join("")}<button type="button" class="danger" data-cmd="stop">Stop</button></div>`;
+    <div class="actions">${QUICK.map(([c, t]) => `<button type="button" data-cmd="${c}">${t}</button>`).join("")}<button type="button" class="danger" data-cmd="stop">Stop</button></div>
+    ${commandsPanel()}`;
   card.querySelector("form.get").addEventListener("submit", (e) => {
     e.preventDefault();
     const f = e.target;
@@ -280,6 +332,32 @@ function makeCard(label) {
   card.querySelector(".actions").addEventListener("click", (e) => {
     const cmd = e.target.closest("button")?.dataset.cmd;
     if (cmd) command(label, cmd);
+  });
+  const more = card.querySelector("details.more");
+  more.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-cmd]");
+    if (!btn) return;
+    if (btn.dataset.confirm && !confirm(`${btn.textContent} for ${$(".name", card).textContent}?`)) return;
+    command(label, btn.dataset.cmd);
+  });
+  more.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const text = fillTemplate(form.dataset.tpl, form);
+    if (/^(plan|say)$/.test(text)) return toast("Fill in the box first.");
+    command(label, text);
+    toast("Sent: " + text);
+    const message = form.querySelector('[name="text"]');
+    if (message) message.value = "";
+  });
+  // Remember whether the panel is open, per bot.
+  try {
+    more.open = localStorage.getItem("more:" + label) === "1";
+  } catch (err) {}
+  more.addEventListener("toggle", () => {
+    try {
+      localStorage.setItem("more:" + label, more.open ? "1" : "0");
+    } catch (err) {}
   });
   card.querySelector(".power").addEventListener("click", (e) => {
     const action = e.target.dataset.action;
