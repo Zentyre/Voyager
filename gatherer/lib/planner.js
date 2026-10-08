@@ -1,8 +1,14 @@
 // Picks the cheapest way to get an item (mine, craft, smelt, or hunt) by
 // scoring each option with a rough cost and recursing into its inputs.
 // Plain search over game data plus the bot's own learned statistics (how long
-// each method has taken, how often it failed, where things were seen before);
-// no language model involved.
+// mining, hunting and farming have taken, how often they failed, where things
+// were seen before); no language model involved.
+//
+// Crafting and smelting have no memory: which recipe is best depends only on
+// what the bot carries and what's around it right now. Costs count how many
+// are needed and how many are already in the bag, so 3 of the 4 planks a
+// crafting table needs make that recipe nearly free, while 1 of 4 still means
+// fetching wood (from the nearest tree, whatever kind it is).
 
 const COST = {
     mineVisible: 1,
@@ -18,6 +24,9 @@ const COST = {
     newFarm: 15, // till, plant, then wait for it to grow
 };
 const MAX_DEPTH = 8;
+// Each extra block or kill after the first: a little more, so needing fewer
+// tips the balance, without making a big order look like a different job.
+const EACH_MORE = 0.05;
 
 // When nothing is in sight, prefer materials that are common in most worlds,
 // so the bot goes looking for oak rather than pale oak or bamboo.
@@ -112,21 +121,25 @@ function createPlanner(ctx) {
         );
     }
 
-    // Cost of having one more of `name`: 0 if already in inventory.
-    function estimate(name, depth, seen) {
-        if (ctx.countItem(name) > 0) return 0;
-        return best(name, depth, seen).cost;
+    // Cost of having `qty` of `name` in the bag: nothing if they're all there,
+    // otherwise the cheapest way to get the ones that are missing.
+    function estimate(name, depth, seen, qty = 1) {
+        if (ctx.countItem(name) >= qty) return 0;
+        return best(name, depth, seen, qty).cost;
     }
 
-    // Cheapest method for `name`, ignoring what is already in the inventory.
-    function best(name, depth = 0, seen = new Set()) {
-        if (memo.has(name)) return memo.get(name);
+    // Cheapest method for getting the bag up to `qty` of `name`.
+    function best(name, depth = 0, seen = new Set(), qty = 1) {
+        const missing = Math.max(1, qty - ctx.countItem(name));
+        const key = `${name}×${missing}`;
+        if (memo.has(key)) return memo.get(key);
         const none = { type: "none", cost: Infinity };
         if (depth > MAX_DEPTH || seen.has(name) || ++evaluations > MAX_EVALUATIONS) {
             return none;
         }
         const path = new Set(seen).add(name);
         const options = [];
+        const more = (cost) => cost + EACH_MORE * (missing - 1);
 
         // Mining
         const blocks = kb.blocksThatDrop(name);
@@ -150,14 +163,17 @@ function createPlanner(ctx) {
                 : remembered("block", blocks.map((b) => b.name))
                   ? COST.mineRemembered
                   : COST.mineHidden + rarity(blocks);
-            options.push({ type: "mine", cost: adjust("mine", name, base) + toolCost, blocks, tool });
+            options.push({ type: "mine", cost: more(adjust("mine", name, base)) + toolCost, blocks, tool });
         }
 
-        // Crafting
+        // Crafting: no memory, just what each recipe still needs. Enough
+        // crafts for the missing amount; each ingredient costs what getting
+        // the rest of it costs.
         for (const recipe of kb.craftingRecipes(name)) {
             const ingredients = kb.recipeIngredients(recipe);
-            let cost = adjust("craft", name, COST.craft);
-            for (const ing of ingredients) cost += estimate(ing.name, depth + 1, path);
+            const times = Math.ceil(missing / (recipe.result?.count || 1));
+            let cost = COST.craft;
+            for (const ing of ingredients) cost += estimate(ing.name, depth + 1, path, ing.count * times);
             if (recipe.requiresTable && !ctx.stationNearby("crafting_table")) {
                 cost += estimate("crafting_table", depth + 1, path);
             }
@@ -166,7 +182,7 @@ function createPlanner(ctx) {
 
         // Smelting
         for (const input of kb.smeltInputs(name)) {
-            let cost = adjust("smelt", name, COST.smelt) + estimate(input, depth + 1, path);
+            let cost = COST.smelt + estimate(input, depth + 1, path, missing);
             if (!ctx.stationNearby("furnace")) cost += estimate("furnace", depth + 1, path);
             if (ctx.fuelInInventory() === 0) cost += 1;
             options.push({ type: "smelt", cost, input });
@@ -207,12 +223,12 @@ function createPlanner(ctx) {
                 : remembered("mob", mobs)
                   ? COST.huntRemembered
                   : COST.huntHidden;
-            options.push({ type: "hunt", cost: adjust("hunt", name, base), mobs });
+            options.push({ type: "hunt", cost: more(adjust("hunt", name, base)), mobs });
         }
 
         const result = options.reduce((a, b) => (b.cost < a.cost ? b : a), none);
         // Only remember finite answers; infinite ones may just be a cycle on this path.
-        if (result.cost < Infinity) memo.set(name, result);
+        if (result.cost < Infinity) memo.set(key, result);
         return result;
     }
 
@@ -231,9 +247,10 @@ function createPlanner(ctx) {
             .sort((a, b) => a.cost - b.cost)[0];
     }
 
-    function plan(name, seen = new Set()) {
+    // `target`: how many the bag should hold (what's there already counts).
+    function plan(name, seen = new Set(), target = 1) {
         startSession();
-        return best(name, 0, seen);
+        return best(name, 0, seen, target);
     }
 
     // `seen`: what we're already in the middle of getting, so the tool can't be

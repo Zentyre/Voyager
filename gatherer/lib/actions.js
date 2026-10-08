@@ -18,7 +18,7 @@ function installActions(ctx) {
         if (seen.has(name)) throw new Error(`going in circles on ${name}`);
         if (!bot.registry.itemsByName[name]) throw new Error(`unknown item ${name}`);
         const next = new Set(seen).add(name);
-        const plan = planner.plan(name, seen);
+        const plan = planner.plan(name, seen, target);
         const missing = target - ctx.countItem(name);
         ctx.log(`Need ${missing} more ${name}: ${plan.type}`);
         if (plan.type === "none") throw new Error(`I don't know how to get ${name}`);
