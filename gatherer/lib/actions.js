@@ -173,7 +173,9 @@ function installActions(ctx) {
         const goal = block.boundingBox === "empty"
             ? new goals.GoalNear(block.position.x, block.position.y, block.position.z, 2)
             : new goals.GoalLookAtBlock(block.position, bot.world);
-        await ctx.withTimeout(bot.pathfinder.goto(goal), 20000 + far * 1500);
+        // Under water: the pathfinder won't go there, so dive.
+        if (ctx.isUnderwater?.(block.position)) await ctx.diveTo(block.position);
+        else await ctx.withTimeout(bot.pathfinder.goto(goal), 20000 + far * 1500);
         const target = bot.blockAt(block.position);
         if (!target || target.type !== block.type) return; // already gone
         await bot.tool.equipForBlock(target, { requireHarvest: true });
@@ -262,14 +264,26 @@ function installActions(ctx) {
         const held = bot.heldItem;
         const helmet = bot.inventory.slots[bot.getEquipmentDestSlot("head")];
         const enchants = [...(held?.enchants || []), ...(helmet?.enchants || [])];
-        const inWater = ["water", "flowing_water"].includes(bot._getBlockAtEyeLevel?.()?.name);
-        const ms = block.digTime(held?.type ?? null, bot.game.gameMode === "creative", inWater, false, enchants, bot.entity.effects);
+        // Head under water, or not standing on anything: each makes it five times slower.
+        const inWater = ctx.headUnderwater ? ctx.headUnderwater() : ["water", "flowing_water"].includes(bot._getBlockAtEyeLevel?.()?.name);
+        const ms = block.digTime(held?.type ?? null, bot.game.gameMode === "creative", inWater, !bot.entity.onGround, enchants, bot.entity.effects);
         if (!Number.isFinite(ms)) throw new Error(`can't break the ${block.name}`);
         stopSwinging();
         bot._client.write("block_dig", { status: 0, location: pos, face });
         bot.swingArm();
         swinging = setInterval(() => bot.swingArm(), 250);
-        await ctx.wait(ms + 50);
+        // A long dig (under water, say) gives way to anything urgent: short of
+        // air, a mob, a stop. Cancel it with the server and let the caller deal.
+        const before = ctx.interrupts;
+        const end = Date.now() + ms + 50;
+        while (Date.now() < end) {
+            await ctx.wait(Math.min(100, Math.max(0, end - Date.now())));
+            if (ctx.interrupts !== before || ctx.stopRequested) {
+                stopSwinging();
+                bot._client.write("block_dig", { status: 1, location: pos, face }); // cancelled
+                throw new Error("interrupted");
+            }
+        }
         bot._client.write("block_dig", { status: 2, location: pos, face }); // finished
         return ms;
     }
@@ -434,10 +448,13 @@ function installActions(ctx) {
         }
     }
 
-    // Jump, and once our feet are above the block we stood on, put dirt there.
-    async function pillarStep(feet) {
+    // Jump, and once our feet are above the block we stood on, put dirt there
+    // (or the first of `prefer` we carry: the builder uses scaffolding).
+    async function pillarStep(feet, prefer = null) {
         const ids = new Set(bot.pathfinder.movements.scafoldingBlocks);
-        const item = bot.inventory.items().find((i) => ids.has(i.type));
+        const item = prefer
+            ? prefer.map((n) => bot.inventory.items().find((i) => i.name === n)).find(Boolean)
+            : bot.inventory.items().find((i) => ids.has(i.type));
         if (!item) throw new Error("out of dirt");
         await bot.equip(item, "hand");
         const ground = bot.blockAt(feet.offset(0, -1, 0));
@@ -963,7 +980,7 @@ function installActions(ctx) {
         ctx.log("Deposited items in chest.");
     }
 
-    Object.assign(ctx, { obtain, depositAll, pickUpDrops, nearestEntity, explore, placeNearby, ensureStation });
+    Object.assign(ctx, { obtain, depositAll, pickUpDrops, nearestEntity, explore, placeNearby, ensureStation, pillarStep, climbDown });
 }
 
 module.exports = { installActions };

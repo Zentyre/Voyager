@@ -258,6 +258,19 @@ The plan adapts to your inventory and surroundings. It uses birch if birch trees
 are what's nearby, skips steps for things it already has, and reuses a crafting
 table or furnace within `stationRadius`.
 
+## Water
+
+- It watches its air. When there's only just enough left to swim up (deeper
+  water, sooner), it drops what it's doing, even mid-dig, and swims up; with
+  something overhead it swims to the nearest open air. Then it carries on.
+- Blocks under water: it swims to the water above them, dives (pushing down
+  like a player holding sneak), stands on the bottom and digs (slower under
+  water, as in the game), coming up for air when it needs to.
+- Left idle in deep water it keeps its head up, then swims to where it can
+  climb out (a bank no higher than the water). If every bank is a block too
+  high, it digs the edge of the nearest one down and climbs out there.
+- Paths prefer land and bridges to long swims.
+
 ## How it learns (no LLM)
 
 It's plain statistics, saved to `memory.json` (one section per server):
@@ -368,6 +381,11 @@ uploaded with the dashboard's Upload button).
   the way the schematic says: stairs, slabs, logs, doors, beds, trapdoors,
   torches, signs, chests, furnaces, pistons, buttons and so on. Blocks with
   nothing next to them get a temporary dirt pillar, taken away afterwards.
+- **High up:** where it can't stand within reach (the top of a tall wall), it
+  puts up a tower beside it and builds from the top, then breaks the tower
+  on the way down and picks the blocks up again. It uses **scaffolding** when
+  it has some (or a chest nearby does), otherwise dirt or cobblestone. Towers
+  never go where the build has a block.
 - **What's in the way:** grass, flowers, leaves and natural ground (dirt,
   stone, sand...) are dug out. Anything else is left alone and reported,
   unless you add `clear`. It never digs through the build on its way around.
@@ -487,4 +505,5 @@ with its progress and what's still to place (what it has and what's in chests).
 | `lib/context.js`    | Shared state and helpers                                  |
 | `lib/profiles.js`   | Profiles: switching what a bot is for while it runs        |
 | `lib/schematic.js`  | Reading .litematic / .schem / .nbt schematics, rotating them |
-| `lib/building.js`   | Builder: materials from chests, placing with the right facing |
+| `lib/building.js`   | Builder: materials from chests, placing with the right facing, towers |
+| `lib/swimming.js`   | Water: air, swimming up, diving, getting out                |

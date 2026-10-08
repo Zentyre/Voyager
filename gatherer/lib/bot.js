@@ -23,6 +23,7 @@ const { createLearning } = require("./learning");
 const { installArchery } = require("./archery");
 const { installBodyguard } = require("./bodyguard");
 const { installBuilding } = require("./building");
+const { installSwimming } = require("./swimming");
 const { createProfiles } = require("./profiles");
 const { patchBot } = require("./compat");
 const { installModSupport } = require("./mods");
@@ -139,6 +140,7 @@ function createBot(config, crew, reporter) {
         installActions(ctx);
         installCombat(ctx);
         installSurvival(ctx);
+        installSwimming(ctx);
         installFarming(ctx);
         installAnimals(ctx);
         installWater(ctx);
@@ -155,6 +157,8 @@ function createBot(config, crew, reporter) {
         // Its 1x1 tower places the block too early in the jump, which servers
         // refuse (the bot is still in the way). climbTo in actions.js builds up instead.
         movements.allow1by1towers = false;
+        // Swimming is slow and uses air: walk round or bridge a lake when it's not far.
+        movements.liquidCost = 3;
         // Never dig through farms, chests, beds, doors, etc. on the way somewhere.
         for (const id of ctx.kb.neverBreakIds()) movements.blocksCantBreak.add(id);
         const modded = bot.registry.blocksByName.modded_block;

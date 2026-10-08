@@ -352,7 +352,7 @@ function installBuilding(ctx) {
     async function makeRoom() {
         if (bot.inventory.emptySlotCount() >= 4) return;
         const need = stillNeeded();
-        const extra = bot.inventory.items().filter((i) => !need[i.name] && !GEAR.test(i.name) && !kb.isFood(i.name));
+        const extra = bot.inventory.items().filter((i) => !need[i.name] && !GEAR.test(i.name) && !kb.isFood(i.name) && !TOWER.includes(i.name));
         if (!extra.length) return;
         const target = config.chest ? new Vec3(config.chest.x, config.chest.y, config.chest.z) : [...chests.values()][0]?.pos;
         if (!target) return;
@@ -402,16 +402,119 @@ function installBuilding(ctx) {
 
     // ---------- moving and placing ----------
 
-    // Somewhere within reach of `pos`, but not in its way.
+    const reachOf = (pos) => bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0).distanceTo(pos.offset(0.5, 0.5, 0.5));
+    const passable = (b) => b && (b.boundingBox === "empty" || REPLACEABLE.test(b.name)) && !/^(water|lava)$/.test(b.name);
+
+    // Somewhere within reach of `pos`, but not in its way. Too high to reach
+    // from anywhere to stand: up a tower next to it.
     async function getNear(pos) {
-        const me = bot.entity.position;
-        const eye = me.offset(0, bot.entity.height ?? 1.62, 0);
-        const far = eye.distanceTo(pos.offset(0.5, 0.5, 0.5));
-        const feet = me.floored();
+        const feet = bot.entity.position.floored();
         const inTheWay = feet.x === pos.x && feet.z === pos.z && pos.y - feet.y >= -1 && pos.y - feet.y <= 1;
-        if (far <= 4.2 && !inTheWay) return;
-        // from far off (down a mine, say) it can take a while
-        await ctx.withTimeout(bot.pathfinder.goto(new GoalReach(pos)), 30000 + 3000 * far);
+        if (reachOf(pos) <= 4.2 && !inTheWay) return;
+        if (job.tower) await towerDown();
+        // Once no way up was found at some height, higher blocks go straight to a tower.
+        if (pos.y >= job.towerFrom || !placeToStand(pos)) return towerUp(pos);
+        try {
+            // from far off (down a mine, say) it can take a while
+            await ctx.withTimeout(bot.pathfinder.goto(new GoalReach(pos)), 30000 + 3000 * reachOf(pos));
+        } catch (err) {
+            // Ground to stand on up there (the top of a wall), but no way onto it.
+            if (err instanceof ctx.Stopped || !/decide path|no path|timed out/i.test(err.message) || pos.y <= bot.entity.position.y + 2) throw err;
+            job.towerFrom = Math.min(job.towerFrom, pos.y);
+            return towerUp(pos);
+        }
+    }
+
+    // Is there ground within a few blocks of `pos` to stand on and reach it from?
+    function placeToStand(pos) {
+        for (let dx = -3; dx <= 3; dx++) {
+            for (let dz = -3; dz <= 3; dz++) {
+                for (let y = pos.y + 2; y >= pos.y - 5; y--) {
+                    const ground = bot.blockAt(new Vec3(pos.x + dx, y - 1, pos.z + dz));
+                    if (!ground) continue;
+                    if (ground.boundingBox !== "block") continue;
+                    const at = new Vec3(pos.x + dx, y, pos.z + dz);
+                    if (!passable(bot.blockAt(at)) || !passable(bot.blockAt(at.offset(0, 1, 0)))) continue;
+                    if (at.equals(pos) || at.offset(0, 1, 0).equals(pos)) continue;
+                    if (at.offset(0.5, 1.62, 0.5).distanceTo(pos.offset(0.5, 0.5, 0.5)) <= 4.2) return true;
+                    break; // the highest ground in this column is too low
+                }
+            }
+        }
+        return false;
+    }
+
+    // ---------- towers, to reach high blocks ----------
+    // Scaffolding is best: one hit breaks it and it comes back as items. Dirt
+    // and cobblestone do too. A tower never goes where the build has a block.
+    const TOWER = ["scaffolding", "dirt", "cobblestone", "cobbled_deepslate", "netherrack"];
+    const towerItems = () => TOWER.reduce((n, name) => n + ctx.countItem(name), 0);
+
+    async function towerUp(pos) {
+        // a column next to it (not where the build goes), lowest tower first
+        const options = [];
+        for (let dx = -2; dx <= 2; dx++) {
+            for (let dz = -2; dz <= 2; dz++) {
+                if (!dx && !dz) continue;
+                const x = pos.x + dx, z = pos.z + dz;
+                const stand = pos.y - 1; // feet there: the block is level with the head
+                let ground = null;
+                for (let y = stand - 1; y > stand - 30; y--) {
+                    const b = bot.blockAt(new Vec3(x, y, z));
+                    if (!b) break;
+                    if (b.boundingBox === "block") {
+                        ground = y;
+                        break;
+                    }
+                }
+                if (ground === null) continue;
+                let ok = true;
+                for (let y = ground + 1; y <= stand + 1 && ok; y++) {
+                    const p = new Vec3(x, y, z);
+                    if (job.spots.has(`${x},${y},${z}`) || !passable(bot.blockAt(p))) ok = false;
+                }
+                if (ok) options.push({ x, z, ground, height: stand - ground - 1, inside: inBox(new Vec3(x, stand, z), job.box) });
+            }
+        }
+        options.sort((a, b) => a.height - b.height || a.inside - b.inside);
+        const spot = options[0];
+        if (!spot) throw new Error("nowhere next to it to put up a tower");
+        if (spot.height > 24) throw new Error("too high to build a tower to");
+        if (towerItems() < spot.height) await getTowerBlocks(spot.height);
+        ctx.doing(`Walking to the foot of a tower at ${spot.x} ${spot.ground + 1} ${spot.z}`);
+        await ctx.withTimeout(bot.pathfinder.goto(new goals.GoalBlock(spot.x, spot.ground + 1, spot.z)), 40000);
+        job.tower = { x: spot.x, z: spot.z, blocks: [] };
+        ctx.doing(`Building a tower up to ${ctx.fmt(pos)}`);
+        for (let i = 0; i < spot.height; i++) {
+            ctx.checkStop();
+            const feet = bot.entity.position.floored();
+            await ctx.pillarStep(feet, TOWER);
+            job.tower.blocks.push(feet);
+        }
+    }
+
+    // Down the tower, breaking it under us; then pick the blocks up again.
+    async function towerDown() {
+        const tower = job.tower;
+        job.tower = null;
+        if (!tower?.blocks.length) return;
+        ctx.doing("Climbing down the tower");
+        await ctx.climbDown(tower.blocks.slice()).catch(() => {});
+        // Scaffolding left standing (knocked off it, say): breaking the bottom brings it all down.
+        const bottom = tower.blocks[0] && bot.blockAt(tower.blocks[0]);
+        if (bottom?.name === "scaffolding") await ctx.safely(() => dig(bottom));
+        await ctx.safely(() => ctx.pickUpDrops(null, 6));
+    }
+
+    async function getTowerBlocks(count) {
+        for (const name of TOWER) {
+            if (towerItems() >= count) return;
+            if (inChests(name) > 0) await takeFromChests(name, count - towerItems());
+        }
+        if (towerItems() < count) {
+            ctx.doing(`Getting ${count - towerItems()} dirt for a tower`);
+            await ctx.obtain("dirt", ctx.countItem("dirt") + count - towerItems());
+        }
     }
 
     // A block to click on, next to `pos` on side `face`.
@@ -541,7 +644,7 @@ function installBuilding(ctx) {
     // A block with nothing next to it to place against: put a temporary
     // pillar of dirt (or cobblestone) under it, taken away afterwards.
     async function scaffoldUnder(t) {
-        const filler = ["dirt", "cobblestone", "netherrack", "cobbled_deepslate"].find((n) => ctx.countItem(n) > 0);
+        const filler = TOWER.find((n) => ctx.countItem(n) > 0);
         if (!filler) return false;
         const column = [];
         for (let y = t.pos.y - 1; y > t.pos.y - 8; y--) {
@@ -588,6 +691,8 @@ function installBuilding(ctx) {
     async function build(options) {
         job = await prepare(options);
         job.scaffold = [];
+        job.tower = null;
+        job.towerFrom = Infinity;
         job.state = "starting";
         saveJob();
         const skippedNote = Object.entries(job.skipped).map(([why, n]) => `${n}× ${why}`).join(", ");
@@ -654,6 +759,7 @@ function installBuilding(ctx) {
                 }
             }
             for (const t of job.targets) if (t.state === "todo") setState(t, "failed");
+            if (job.tower) await ctx.safely(towerDown);
             await takeDownScaffold();
             job.state = "finished";
             ctx.say(summary());

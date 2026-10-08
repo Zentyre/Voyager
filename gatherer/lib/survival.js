@@ -220,6 +220,7 @@ function installSurvival(ctx) {
     // Called between actions: armor, fire, mobs, hunger, bedtime.
     async function guard() {
         if (fighting || sleeping || !bot.entity) return;
+        await ctx.breathe?.(); // air first
         await ctx.equipArmor();
         await ctx.extinguish();
         const waitUntil = Date.now() + 60000;
@@ -246,6 +247,7 @@ function installSurvival(ctx) {
         }
         if (!seekingFood) await maybeEat();
         await maybeSleep();
+        await ctx.getOutOfWater?.();
     }
 
     // Watch for mobs and fire while busy; look after ourselves while idle.
