@@ -166,7 +166,13 @@ function installActions(ctx) {
         const far = block.position.distanceTo(bot.entity.position);
         const what = `${ctx.pretty(block.name)} at ${ctx.fmt(block.position)}`;
         ctx.doing(`Walking to the ${what}`);
-        await ctx.withTimeout(bot.pathfinder.goto(new goals.GoalLookAtBlock(block.position, bot.world)), 20000 + far * 1500);
+        // Grass, flowers and crops have no hitbox, so "somewhere it can be seen
+        // from" never comes true for them (the pathfinder searched until it gave
+        // up): just get next to those.
+        const goal = block.boundingBox === "empty"
+            ? new goals.GoalNear(block.position.x, block.position.y, block.position.z, 2)
+            : new goals.GoalLookAtBlock(block.position, bot.world);
+        await ctx.withTimeout(bot.pathfinder.goto(goal), 20000 + far * 1500);
         const target = bot.blockAt(block.position);
         if (!target || target.type !== block.type) return; // already gone
         await bot.tool.equipForBlock(target, { requireHarvest: true });
