@@ -42,6 +42,12 @@ const NEVER_BREAK = [
     "glass", "glass_pane", "torch", "wall_torch", "lantern", "bookshelf", "enchanting_table",
     "anvil", "brewing_stand", "beacon", "spawner",
 ];
+// Things players build with, by pattern (every color and wood type).
+const NEVER_BREAK_PATTERNS = [
+    /_bed$/, /_door$/, /_trapdoor$/, /_fence$/, /_fence_gate$/, /_wall$/, /_carpet$/,
+    /_stained_glass(_pane)?$/, /_sign$/, /_banner$/, /_shulker_box$/, /^shulker_box$/, /lantern$/, /torch$/,
+    /_chest$/, /_bars$/, /^(ladder|scaffolding|lectern|jukebox|note_block|bell|campfire|soul_campfire|composter|hopper|dropper|dispenser)$/,
+];
 const NATURAL_PATTERNS = [
     /_log$/, // all tree logs
     /^(crimson|warped)_stem$/,
@@ -237,7 +243,9 @@ function createKnowledge(bot, config) {
     }
 
     function neverBreakIds() {
-        return NEVER_BREAK.map((name) => registry.blocksByName[name]?.id).filter((id) => id !== undefined);
+        return registry.blocksArray
+            .filter((b) => NEVER_BREAK.includes(b.name) || NEVER_BREAK_PATTERNS.some((p) => p.test(b.name)))
+            .map((b) => b.id);
     }
 
     function isFood(name) {

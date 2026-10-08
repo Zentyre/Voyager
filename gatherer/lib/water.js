@@ -11,7 +11,8 @@ function installWater(ctx) {
 
     function findSource(radius = config.searchRadius) {
         return bot
-            .findBlocks({ matching: waterId(), maxDistance: radius, count: 64 })
+            // plenty: the nearest water is often under the surface, not usable
+            .findBlocks({ matching: waterId(), maxDistance: radius, count: 512 })
             .map((pos) => bot.blockAt(pos))
             .filter(isSource)
             .filter((b) => bot.blockAt(b.position.offset(0, 1, 0))?.name === "air")[0];
@@ -43,7 +44,7 @@ function installWater(ctx) {
                 continue;
             }
             ctx.doing("Looking for water");
-            await ctx.explore("block", ["water"]);
+            await ctx.explore("block", ["water"], () => [findSource()].filter(Boolean));
         }
         throw new Error("couldn't find water to fill a bucket");
     }

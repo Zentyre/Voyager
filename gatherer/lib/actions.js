@@ -81,7 +81,7 @@ function installActions(ctx) {
                 continue;
             }
 
-            const positions = bot
+            const candidates = () => bot
                 .findBlocks({
                     matching: harvestable.map((b) => b.id),
                     maxDistance: config.searchRadius,
@@ -89,6 +89,7 @@ function installActions(ctx) {
                 })
                 .filter((p) => !skipped.has(p.toString()) && !isProtected(p) && !learn.isUnreachable(p))
                 .filter((p) => !ctx.crew?.claimedByOther(`block:${p}`));
+            const positions = candidates();
             // Prefer blocks near our own height: the top of a tree whose trunk
             // is gone looks close but can't be reached without building up.
             // Logs grow on the surface, so one far below is in a ravine or cave
@@ -109,7 +110,7 @@ function installActions(ctx) {
                 }
                 ctx.log(`No ${name} source in range, exploring (${exploreAttempts}/${config.maxExploreAttempts}).`);
                 ctx.doing(`Looking for ${ctx.pretty(name)} (${exploreAttempts}/${config.maxExploreAttempts})`);
-                lastExplore = await exploreAndReplan(seen, "block", harvestable.map((b) => b.name));
+                lastExplore = await exploreAndReplan(seen, "block", harvestable.map((b) => b.name), candidates);
                 continue;
             }
             exploreAttempts = 0;
@@ -537,8 +538,8 @@ function installActions(ctx) {
 
     // After wandering somewhere new, a different material may now be closer
     // (birch instead of oak), so sub-steps hand control back to re-plan.
-    async function exploreAndReplan(seen, kind, names) {
-        const choice = await explore(kind, names);
+    async function exploreAndReplan(seen, kind, names, usable) {
+        const choice = await explore(kind, names, usable);
         const task = ctx.current;
         if (!task) return choice;
         task.explores = (task.explores || 0) + 1;
@@ -559,11 +560,56 @@ function installActions(ctx) {
         return Boolean(bot.findBlock({ matching: ids, maxDistance: config.searchRadius }));
     }
 
+    // What of `names` is in view now, as keys: block positions or mob ids.
+    // `usable` (from the caller) leaves out what it can't use, e.g. blocks it
+    // already gave up on, or water that isn't a source.
+    function inView(kind, names, usable) {
+        if (usable) return usable().map((x) => String(x?.id ?? x?.position ?? x)); // mobs by id, blocks by place
+        if (kind === "mob") {
+            const me = bot.entity.position;
+            return Object.values(bot.entities)
+                .filter((e) => names.includes(e.name) && e.position.distanceTo(me) <= config.searchRadius)
+                .map((e) => `mob:${e.id}`);
+        }
+        const ids = names.map((n) => bot.registry.blocksByName[n]?.id).filter((id) => id !== undefined);
+        return bot.findBlocks({ matching: ids, maxDistance: config.searchRadius, count: 32 }).map(String);
+    }
+
+    // Walk to `goal`, but stop as soon as something new from `names` comes
+    // into view: it used to walk on to a remembered spot past water (or trees,
+    // or cows) on the way. Things in view when it set off don't count; they
+    // were there already and weren't good enough. Returns true if it stopped
+    // for something.
+    async function walkLooking(goal, ms, kind, names, usable) {
+        const before = new Set(inView(kind, names, usable));
+        let spotted = false;
+        const timer = setInterval(() => {
+            try {
+                if (!spotted && inView(kind, names, usable).some((key) => !before.has(key))) {
+                    spotted = true;
+                    bot.pathfinder.setGoal(null);
+                }
+            } catch (err) {
+                // world changing under us; check again next time
+            }
+        }, 1000);
+        try {
+            await ctx.withTimeout(bot.pathfinder.goto(goal), ms);
+        } catch (err) {
+            if (!spotted) throw err;
+        } finally {
+            clearInterval(timer);
+        }
+        if (spotted) ctx.log(`Spotted ${names.slice(0, 3).join("/")} on the way.`);
+        return spotted;
+    }
+
     // Look for `names` (blocks or mobs). First go back to places we remember
     // seeing them; otherwise pick a compass direction, learning which
     // directions tend to pay off around here and avoiding places we got hurt.
+    // Either way it keeps looking on the way (see walkLooking).
     // Returns the direction choice so the caller can score it.
-    async function explore(kind = "block", names = []) {
+    async function explore(kind = "block", names = [], usable = null) {
         const pos = bot.entity.position;
         const remembered = learn
             .recall(kind, names, pos)
@@ -571,10 +617,11 @@ function installActions(ctx) {
         if (remembered.length) {
             const spot = remembered[0];
             ctx.log(`Heading to where I saw ${spot.name} before (${spot.x} ${spot.z}).`);
-            await ctx.during(`Heading to where I saw ${ctx.pretty(spot.name)} before (${spot.x} ${spot.z})`, () =>
-                ctx.safely(() => ctx.withTimeout(bot.pathfinder.goto(new goals.GoalNear(spot.x, spot.y, spot.z, 6)), 120000))
+            const goal = new goals.GoalNear(spot.x, spot.y, spot.z, 6);
+            const spotted = await ctx.during(`Heading to where I saw ${ctx.pretty(spot.name)} before (${spot.x} ${spot.z})`, () =>
+                ctx.safely(() => walkLooking(goal, 120000, kind, names, usable))
             );
-            if (!sourcesInView(kind, names)) learn.forget(kind, names, new Vec3(spot.x, spot.y, spot.z));
+            if (!spotted && !sourcesInView(kind, names)) learn.forget(kind, names, new Vec3(spot.x, spot.y, spot.z));
             return null;
         }
 
@@ -596,7 +643,7 @@ function installActions(ctx) {
         const dest = target(arm);
         const looking = names.length ? ` for ${names.slice(0, 3).map(ctx.pretty).join(" / ")}` : "";
         await ctx.during(`Exploring ${arm}${looking} (to ${dest.x} ${dest.z})`, () =>
-            ctx.safely(() => ctx.withTimeout(bot.pathfinder.goto(new goals.GoalXZ(dest.x, dest.z)), 60000))
+            ctx.safely(() => walkLooking(new goals.GoalXZ(dest.x, dest.z), 60000, kind, names, usable))
         );
         return { context, arm };
     }
@@ -810,12 +857,13 @@ function installActions(ctx) {
             await ctx.act(() => pickUpDrops(name));
             if (ctx.countItem(name) >= target) break;
 
-            const mob = nearestEntity(
+            const findMob = () => nearestEntity(
                 mobs,
                 config.searchRadius,
                 gaveUpOn,
                 (e) => ctx.huntable(e) && !ctx.crew?.claimedByOther(`mob:${e.id}`)
             );
+            const mob = findMob();
             if (lastExplore) {
                 learn.reward(lastExplore.context, lastExplore.arm, mob ? 1 : 0);
                 lastExplore = null;
@@ -826,7 +874,7 @@ function installActions(ctx) {
                 }
                 ctx.log(`No ${mobs.join("/")} I can hunt in range, exploring (${exploreAttempts}/${config.maxExploreAttempts}).`);
                 ctx.doing(`Looking for ${mobs.map(ctx.pretty).join(" / ")} (${exploreAttempts}/${config.maxExploreAttempts})`);
-                lastExplore = await exploreAndReplan(seen, "mob", mobs);
+                lastExplore = await exploreAndReplan(seen, "mob", mobs, () => [findMob()].filter(Boolean));
                 continue;
             }
             exploreAttempts = 0;

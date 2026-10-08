@@ -5,6 +5,8 @@ const { Vec3 } = require("vec3");
 
 const TILLABLE = new Set(["dirt", "grass_block", "dirt_path", "coarse_dirt", "rooted_dirt"]);
 const UP = new Vec3(0, 1, 0);
+// Plants that sit on soil and break in one hit.
+const PLANTS = /^(short_grass|tall_grass|fern|large_fern|dead_bush|dandelion|poppy|blue_orchid|allium|azure_bluet|[a-z]+_tulip|oxeye_daisy|cornflower|lily_of_the_valley|torchflower|pink_petals|wildflowers|leaf_litter|bush|firefly_bush|short_dry_grass|tall_dry_grass|snow)$/;
 
 function installFarming(ctx) {
     const { bot, config, kb, planner } = ctx;
@@ -80,36 +82,74 @@ function installFarming(ctx) {
         }
     }
 
-    // Empty farmland first, then dirt within 4 blocks of water (so it stays hydrated).
+    // Room to till: a hoe only works with nothing on top, but grass and
+    // flowers on top just need knocking off first.
+    function clearAbove(pos) {
+        const above = bot.blockAt(pos.offset(0, 1, 0));
+        return above?.name === "air" || PLANTS.test(above?.name || "");
+    }
+
+    // Empty farmland first; then soil level with water within 4 blocks (it
+    // stays wet); then soil one block above that water, the usual pond bank:
+    // crops grow there too, only slower. It used to take only the first two,
+    // so beside an ordinary pond there was "no room for a farm".
     function farmSpots(count) {
-        const isFree = (pos) => bot.blockAt(pos.offset(0, 1, 0))?.name === "air";
         const spots = bot
             .findBlocks({ matching: blockId("farmland"), maxDistance: config.searchRadius, count: 128 })
-            .filter(isFree)
-            .sort(byDistance);
-
-        const waters = bot
-            .findBlocks({ matching: blockId("water"), maxDistance: config.searchRadius, count: 64 })
+            .filter((pos) => bot.blockAt(pos.offset(0, 1, 0))?.name === "air")
             .sort(byDistance);
         const seen = new Set(spots.map(String));
+        // The water's surface: plenty of blocks, since most water is under it.
+        const waters = bot
+            .findBlocks({ matching: blockId("water"), maxDistance: config.searchRadius, count: 1024 })
+            .filter((pos) => bot.blockAt(pos.offset(0, 1, 0))?.name !== "water")
+            .sort(byDistance)
+            .slice(0, 48);
+        const wet = [];
+        const dry = [];
         for (const water of waters) {
-            if (spots.length >= count) break;
-            const near = [];
             for (let dx = -4; dx <= 4; dx++) {
                 for (let dz = -4; dz <= 4; dz++) {
-                    const pos = water.offset(dx, 0, dz);
-                    if (seen.has(String(pos))) continue;
-                    const block = bot.blockAt(pos);
-                    if (block && TILLABLE.has(block.name) && isFree(pos)) near.push(pos);
+                    for (const [dy, list] of [[0, wet], [1, dry]]) {
+                        const pos = water.offset(dx, dy, dz);
+                        if (seen.has(String(pos))) continue;
+                        const block = bot.blockAt(pos);
+                        if (block && TILLABLE.has(block.name) && clearAbove(pos)) {
+                            seen.add(String(pos));
+                            list.push(pos);
+                        }
+                    }
                 }
             }
-            near.sort((a, b) => a.distanceTo(water) - b.distanceTo(water));
-            for (const pos of near) {
-                seen.add(String(pos));
-                spots.push(pos);
-            }
+            if (spots.length + wet.length >= count) break;
         }
-        return spots.slice(0, count);
+        return [...spots, ...wet.sort(byDistance), ...dry.sort(byDistance)].slice(0, count);
+    }
+
+    // Till the soil at `pos` (knocking off grass on top first). Returns
+    // whether it is farmland now.
+    async function till(pos) {
+        const above = bot.blockAt(pos.offset(0, 1, 0));
+        if (above && above.name !== "air" && PLANTS.test(above.name)) {
+            await bot.dig(above, true).catch(() => {});
+            await bot.waitForTicks(2);
+        }
+        let soil = bot.blockAt(pos);
+        if (!TILLABLE.has(soil?.name)) return soil?.name === "farmland";
+        const hoe = bot.inventory.items().find((i) => kb.HOES.includes(i.name));
+        if (!hoe) throw new Error("no hoe");
+        await bot.equip(hoe, "hand");
+        // Click the top face, where a player would.
+        await bot.lookAt(pos.offset(0.5, 1, 0.5), true);
+        await bot.activateBlock(soil, UP, new Vec3(0.5, 1, 0.5));
+        for (let i = 0; i < 10 && bot.blockAt(pos)?.name !== "farmland"; i++) await bot.waitForTicks(1);
+        soil = bot.blockAt(pos);
+        if (soil?.name !== "farmland") {
+            const top = bot.blockAt(pos.offset(0, 1, 0))?.name;
+            ctx.log(`Couldn't till the ${soil?.name} at ${ctx.fmt(pos)} (above it: ${top}).`);
+            return false;
+        }
+        return true;
     }
 
     // Till and plant up to `count` plots of `crop`.
@@ -141,15 +181,7 @@ function installFarming(ctx) {
             await ctx.guard();
             ctx.doing(`Tilling the soil at ${ctx.fmt(pos)} (${planted}/${spots.length} planted)`);
             await ctx.act(() => ctx.goTo(pos, 2));
-            let soil = bot.blockAt(pos);
-            if (TILLABLE.has(soil?.name)) {
-                const hoe = bot.inventory.items().find((i) => kb.HOES.includes(i.name));
-                await bot.equip(hoe, "hand");
-                await bot.activateBlock(soil);
-                await bot.waitForTicks(4);
-                soil = bot.blockAt(pos);
-            }
-            if (soil?.name !== "farmland") continue;
+            if (!(await till(pos))) continue;
             if (await replant(pos.offset(0, 1, 0), crop)) planted++;
         }
         ctx.say(`Planted ${planted} ${crop.block}.`);

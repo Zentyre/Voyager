@@ -44,7 +44,7 @@ function installBrewing(ctx) {
             ctx.checkStop();
             const source = ctx.findWaterSource();
             if (!source) {
-                await ctx.explore("block", ["water"]);
+                await ctx.explore("block", ["water"], () => [ctx.findWaterSource()].filter(Boolean));
                 continue;
             }
             await ctx.act(() => ctx.goTo(source.position, 3, "the water"));

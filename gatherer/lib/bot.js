@@ -154,6 +154,31 @@ function createBot(config, crew, reporter) {
         for (const id of ctx.kb.neverBreakIds()) movements.blocksCantBreak.add(id);
         const modded = bot.registry.blocksByName.modded_block;
         if (modded) movements.blocksCantBreak.add(modded.id);
+        // A fence or wall with carpet on top can be jumped onto and walked over
+        // like a full block. The pathfinder took carpet for air and a fence for
+        // too tall to climb, so it dug through instead.
+        const getBlock = movements.getBlock.bind(movements);
+        movements.getBlock = (pos, dx, dy, dz) => {
+            const b = getBlock(pos, dx, dy, dz);
+            if (pos && movements.fences.has(b.type)) {
+                const above = bot.blockAt(b.position.offset(0, 1, 0), false);
+                if (above && movements.carpets.has(above.type)) {
+                    b.physical = true;
+                    b.height = pos.y + dy + 1;
+                }
+            }
+            return b;
+        };
+        // Nor tunnel under a fence or wall (it tried, a block or two down):
+        // that opens a pen as much as breaking it.
+        const safeToBreak = movements.safeToBreak.bind(movements);
+        movements.safeToBreak = (block) => {
+            for (let dy = 1; dy <= 3; dy++) {
+                const above = bot.blockAt(block.position.offset(0, dy, 0), false);
+                if (above && movements.fences.has(above.type)) return false;
+            }
+            return safeToBreak(block);
+        };
         bot.pathfinder.setMovements(movements);
         bot.pathfinder.thinkTimeout = 10000;
         bot.pathfinder.tickTimeout = 30;

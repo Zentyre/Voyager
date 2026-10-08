@@ -78,7 +78,7 @@ function installAnimals(ctx) {
                 if (ready.length < 2) {
                     if (++searches > config.maxExploreAttempts) throw new Error(`couldn't find two adult ${animal}`);
                     ctx.doing(`Looking for two adult ${ctx.pretty(animal)}s`);
-                    await ctx.explore("mob", [animal]);
+                    await ctx.explore("mob", [animal], () => adults(animal));
                     continue;
                 }
                 const me = bot.entity.position;
