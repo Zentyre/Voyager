@@ -38,6 +38,40 @@ function installCombat(ctx) {
     let shieldUp = false;
     let extinguishing = false;
 
+    // ---------- who can get at us ----------
+
+    // Can it see us (and so come for us, or shoot)? Mobs only go for a player
+    // they can see: one on the other side of a wall isn't after the bot.
+    function canSee(entity) {
+        if (!entity?.position || !bot.entity) return false;
+        const eyes = [bot.entity.position.offset(0, 1.62, 0), bot.entity.position.offset(0, 0.5, 0)];
+        const theirs = [entity.position.offset(0, (entity.height || 1.6) * 0.85, 0), entity.position.offset(0, (entity.height || 1.6) * 0.4, 0)];
+        return eyes.some((from) =>
+            theirs.some((to) => {
+                const dir = to.minus(from);
+                const range = dir.norm();
+                if (range < 0.5) return true;
+                return !bot.world.raycast(from, dir.normalize(), range, (b) => b.boundingBox === "block");
+            })
+        );
+    }
+
+    // Who hurt the bot lately (the server names the attacker on 1.20+;
+    // otherwise, the nearest hostile mob that can see it).
+    const hurtBy = new Map(); // entity id -> when
+    bot.on("entityHurt", (entity, source) => {
+        if (!bot.entity || entity !== bot.entity) return;
+        let attacker = source && source !== bot.entity ? source : null;
+        if (!attacker) {
+            const me = bot.entity.position;
+            attacker = Object.values(bot.entities)
+                .filter((e) => e !== bot.entity && e.position && isHostile(e) && e.position.distanceTo(me) < 6 && canSee(e))
+                .sort((a, b) => a.position.distanceTo(me) - b.position.distanceTo(me))[0];
+        }
+        if (attacker) hurtBy.set(attacker.id, Date.now());
+    });
+    const hurtMe = (entity, ms = 10000) => Date.now() - (hurtBy.get(entity?.id) || 0) < ms;
+
     function isHostile(entity) {
         return bot.registry.entitiesByName[entity.name]?.category === "Hostile mobs";
     }
@@ -119,9 +153,14 @@ function installCombat(ctx) {
         return Boolean(leash?.entity?.position && leash.entity.position.distanceTo(bot.entity.position) > leash.radius);
     }
 
-    async function attack(mob, { timeoutMs = 30000, maxDistance = Infinity, style = "fast", leash = null } = {}) {
+    // `defend`: only while it's coming for us. Stop once it's out of sight, or
+    // can't be got to without digging, and hasn't hurt us lately.
+    async function attack(mob, { timeoutMs = 30000, maxDistance = Infinity, style = "fast", leash = null, defend = false } = {}) {
         if (style === "bow") return ctx.shoot(mob, { timeoutMs, maxDistance, leash });
         const before = ctx.interrupts;
+        let seen = Date.now();
+        let closest = Infinity;
+        let closer = Date.now();
         ctx.target = mob;
         const weapon = await equipWeapon();
         const cooldownMs = 1000 / weapon.speed;
@@ -136,6 +175,18 @@ function installCombat(ctx) {
                 if (Date.now() - start > timeoutMs) throw new Error(`couldn't kill the ${mob.name} in time`);
                 const distance = mob.position.distanceTo(bot.entity.position);
                 if (distance > maxDistance || offLeash(leash)) return; // it left, or we strayed
+                if (defend) {
+                    if (canSee(mob)) seen = Date.now();
+                    // In reach, or getting closer: it can be got to.
+                    if (distance <= REACH + 0.5 || distance < closest - 0.5) {
+                        closest = distance;
+                        closer = Date.now();
+                    }
+                    if (!hurtMe(mob, 5000)) {
+                        if (Date.now() - seen > 3000) throw new Error(`the ${mob.name} went out of sight; leaving it`);
+                        if (distance > REACH + 0.5 && Date.now() - closer > 6000) throw new Error(`can't get to the ${mob.name} without digging; leaving it`);
+                    }
+                }
                 if (isHostile(mob) && bot.health <= config.fleeHealth) {
                     raiseShield(false);
                     await ctx.during("Too hurt: backing off to eat", () => retreat(mob));
@@ -372,12 +423,21 @@ function installCombat(ctx) {
         return won;
     }
 
+    // Fighting back, it doesn't dig its way to the mob: that would be going
+    // looking for a fight (running away still may).
     async function fightAs(style, mob, maxDistance, leash) {
         if (style === "flee") {
             await flee(mob);
-        } else {
-            ctx.log(`Fighting ${mob.name} (${style}).`);
-            await attack(mob, { timeoutMs: style === "bow" ? 40000 : 20000, maxDistance, style, leash });
+            return;
+        }
+        ctx.log(`Fighting ${mob.name} (${style}).`);
+        const movements = bot.pathfinder.movements;
+        const canDig = movements.canDig;
+        movements.canDig = false;
+        try {
+            await attack(mob, { timeoutMs: style === "bow" ? 40000 : 20000, maxDistance, style, leash, defend: true });
+        } finally {
+            movements.canDig = canDig;
         }
     }
 
@@ -436,6 +496,8 @@ function installCombat(ctx) {
     }
 
     Object.assign(ctx, {
+        canSee,
+        hurtMe,
         isHostile,
         offLeash,
         equipWeapon,

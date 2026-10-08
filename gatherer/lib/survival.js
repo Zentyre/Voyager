@@ -28,7 +28,10 @@ function installSurvival(ctx) {
         // digging in still blows it up.
         const flee = kb.FLEE_FROM.has(entity.name);
         const radius = flee ? Math.max(config.defendRadius, 12) : config.defendRadius;
-        return entity.position.distanceTo(me) <= radius && Math.abs(entity.position.y - me.y) < (flee ? 7 : 4);
+        if (entity.position.distanceTo(me) > radius || Math.abs(entity.position.y - me.y) >= (flee ? 7 : 4)) return false;
+        // Only what can get at us: in sight, or it just hurt us. A zombie on
+        // the other side of the wall of the tunnel it's mining isn't a fight.
+        return ctx.hurtMe(entity) || ctx.canSee(entity);
     }
 
     // Closest threat, with archers and creepers dealt with first.
