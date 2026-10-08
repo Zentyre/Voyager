@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Gatherer Dashboard</title>
+<title>Bot Dashboard</title>
 <style>
 :root {
   --bg: #0f1216;
@@ -223,7 +223,7 @@ details.world:not([open]) > summary::after { content: "▸"; }
 </head>
 <body>
 <header>
-  <h1><span id="conn" class="dot"></span> Gatherer</h1>
+  <h1><span id="conn" class="dot"></span> Bot Dashboard</h1>
   <form class="cmd" id="cmdForm" autocomplete="off">
     <select id="target" aria-label="Send to"></select>
     <input id="cmdText" placeholder="Command, e.g. get oak_log 64 · status · guard Zentyre" aria-label="Command">
@@ -314,7 +314,7 @@ async function control(action, bot) {
 document.querySelector(".manage").addEventListener("click", (e) => {
   const action = e.target.closest("button")?.dataset.control;
   if (!action) return;
-  if (action === "shutdown" && !confirm("Disconnect every bot and close Gatherer? Start it again with Start Gatherer.")) return;
+  if (action === "shutdown" && !confirm("Disconnect every bot and close Dashboard? Start it again with Start Dashboard.")) return;
   if (action === "stopAll" && !confirm("Disconnect every bot?")) return;
   control(action);
   if (action === "shutdown") toast("Shutting down…");
@@ -749,7 +749,7 @@ function allPlayers() {
 
 function renderWorld() {
   const online = [...state.bots.values()].filter((b) => b.online);
-  document.title = state.bots.size ? `Gatherer · ${online.length}/${state.bots.size} online` : "Gatherer Dashboard";
+  document.title = state.bots.size ? `Dashboard · ${online.length}/${state.bots.size} online` : "Bot Dashboard";
   const ref = online.find((b) => /overworld/.test(b.dimension || "")) || online[0];
   const info = [];
   if (ref && ref.time != null) {
