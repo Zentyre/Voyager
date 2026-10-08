@@ -38,7 +38,7 @@ For a LAN world the port is printed in chat when you open it. The default
 
 ### Without a terminal (Windows)
 
-Double-click **`Start Gatherer.vbs`** in the `gatherer` folder. It starts
+Double-click **`Start Dashboard.vbs`** in the `gatherer` folder. It starts
 Gatherer in the background and opens the dashboard
 (http://localhost:3000) in your browser. From there:
 
@@ -424,7 +424,7 @@ with its progress and what's still to place (what it has and what's in chests).
 | `deathWhisper`       | `true`        | `/msg` the owner where the bot died                               |
 | `build`              | `{ "chests": [], "chestRadius": 24, "maxChests": 16, "clear": false }` | Builder: extra chests (`[{ "x": 0, "y": 64, "z": 0 }]`), how far to look for chests, and always clearing what's in the way |
 | `dashboard`          | `{ "port": 3000, "host": "127.0.0.1" }` | Web dashboard; `false` to turn it off |
-| `autoStart`          | `[]`          | With `Start Gatherer.vbs`: bots to start right away (names, or `true` for all) |
+| `autoStart`          | `[]`          | With `Start Dashboard.vbs`: bots to start right away (names, or `true` for all) |
 | `tasks`              | `[]`          | `[{ "item": "oak_log", "count": 32 }, …]`                         |
 | `bots`               | `[]`          | Crew members: `[{ "username": "Miner" }, …]`, each may override any setting |
 | `reconnect`          | `true`        | Crew: rejoin automatically after being kicked or disconnected     |
@@ -467,7 +467,7 @@ with its progress and what's still to place (what it has and what's in chests).
 | `lib/crew-worker.js`| Worker-thread entry point for a crew member               |
 | `lib/dashboard.js`  | Web dashboard server (status stream, commands, start/stop) |
 | `lib/updater.js`    | Dashboard Update/Restart (git pull, npm install)          |
-| `Start Gatherer.vbs`| Windows launcher: runs Gatherer hidden, opens the dashboard |
+| `Start Dashboard.vbs`| Windows launcher: runs Gatherer hidden, opens the dashboard |
 | `dashboard/index.html` | The dashboard page                                     |
 | `lib/compat.js`     | Minecraft 26.3 support: registers `compat/26.3` data, adapts packets |
 | `lib/mods.js`       | Modded servers: unknown modded blocks, list of the server's mods |

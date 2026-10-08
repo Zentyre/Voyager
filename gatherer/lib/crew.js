@@ -299,7 +299,7 @@ function startCrew(configs, { manager = false } = {}) {
                         .catch((err) => {
                             // Couldn't start the new copy: keep this one going, and say why.
                             shuttingDown = false;
-                            hub?.log("updater", `Couldn't restart (${err.message}). Still running; bringing the bots back. Close Gatherer and open Start Gatherer.vbs to load the update.`);
+                            hub?.log("updater", `Couldn't restart (${err.message}). Still running; bringing the bots back. Close Gatherer and open Start Dashboard.vbs to load the update.`);
                             queueStart(members.filter((m) => running.includes(m.label)));
                         })
                 );

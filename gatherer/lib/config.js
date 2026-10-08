@@ -49,7 +49,7 @@ const DEFAULTS = {
     reconnect: true, // crew mode: rejoin after being kicked or disconnected
     dashboard: { port: 3000, host: "127.0.0.1" }, // web page to watch and command the bots; false to turn off
     deathWhisper: true, // /msg the owner where a bot died
-    autoStart: [], // with Start Gatherer.vbs: bots to start right away (names, or true for all)
+    autoStart: [], // with Start Dashboard.vbs: bots to start right away (names, or true for all)
     // builder profile: chests to take materials from (besides any within
     // chestRadius of the build and of home), and "clear" to dig out anything
     // in the way (by default only natural ground and plants)
@@ -67,7 +67,7 @@ function loadConfig(argv) {
     let configPath = path.join(__dirname, "..", "config.json");
     const cliTasks = [];
     const only = [];
-    let manager = false; // run from the dashboard (Start Gatherer.vbs)
+    let manager = false; // run from the dashboard (Start Dashboard.vbs)
     for (let i = 0; i < argv.length; i++) {
         if (argv[i] === "--config") {
             configPath = path.resolve(argv[++i]);

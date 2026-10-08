@@ -59,7 +59,7 @@ async function update(log) {
 // bots in `resume` (the ones running before). Throws if it couldn't start
 // one, and this copy keeps running.
 //
-// Output: when this copy already writes to a file (Start Gatherer.vbs sends
+// Output: when this copy already writes to a file (Start Dashboard.vbs sends
 // it to logs\gatherer.log), the new one shares that same file handle. Opening
 // the file again doesn't work on Windows, where the launcher holds it locked
 // for writing: that failed, crashed this copy, and nothing came back.

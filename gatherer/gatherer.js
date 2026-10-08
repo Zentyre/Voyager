@@ -11,7 +11,7 @@
 //   node gatherer.js oak_log:64 iron_pickaxe:1
 //   node gatherer.js --config other.json coal:16
 //   node gatherer.js --bot Miner              # just one bot from "bots"
-//   node gatherer.js --manager                # start/stop bots from the dashboard (what "Start Gatherer.vbs" runs)
+//   node gatherer.js --manager                # start/stop bots from the dashboard (what "Start Dashboard.vbs" runs)
 //
 // While it runs, http://localhost:3000 shows a dashboard to watch and command the bots.
 
@@ -30,7 +30,7 @@ try {
 }
 
 if (config.manager) {
-    // Started from "Start Gatherer.vbs": everything is run from the dashboard.
+    // Started from "Start Dashboard.vbs": everything is run from the dashboard.
     require("./lib/crew").startCrew(configs, { manager: true });
 } else if (configs.length > 1) {
     require("./lib/crew").startCrew(configs);
