@@ -288,10 +288,23 @@ function startCrew(configs, { manager = false } = {}) {
             case "update":
                 require("./updater").update((line) => hub?.log("updater", line));
                 break;
-            case "restart":
-                hub?.log("updater", "Restarting...");
-                shutdown(() => require("./updater").restart());
+            case "restart": {
+                // The new copy starts these again; otherwise only "autoStart"
+                // bots came back and the rest sat there stopped.
+                const running = members.filter((m) => m.state !== "stopped").map((m) => m.label);
+                hub?.log("updater", `Restarting${running.length ? ` (bringing back ${running.join(", ")})` : ""}...`);
+                shutdown(() =>
+                    require("./updater")
+                        .restart(running)
+                        .catch((err) => {
+                            // Couldn't start the new copy: keep this one going, and say why.
+                            shuttingDown = false;
+                            hub?.log("updater", `Couldn't restart (${err.message}). Still running; bringing the bots back. Close Gatherer and open Start Gatherer.vbs to load the update.`);
+                            queueStart(members.filter((m) => running.includes(m.label)));
+                        })
+                );
                 break;
+            }
             case "shutdown":
                 hub?.log("crew", "Shutting down.");
                 shutdown();
@@ -315,7 +328,11 @@ function startCrew(configs, { manager = false } = {}) {
 
     if (manager) {
         const auto = configs[0].autoStart;
-        const list = auto === true ? members : members.filter((m) => (auto || []).some((n) => byName(n) === m));
+        // Bots that were running before a dashboard Restart.
+        const resume = (process.env.GATHERER_RESUME || "").split(",").filter(Boolean);
+        delete process.env.GATHERER_RESUME;
+        const wanted = [...(Array.isArray(auto) ? auto : []), ...resume];
+        const list = auto === true ? members : members.filter((m) => wanted.some((n) => byName(n) === m));
         if (list.length) queueStart(list);
         log(`Ready. ${list.length ? `Starting ${list.map((m) => m.label).join(", ")}; s` : "S"}tart the others from the dashboard.`);
     } else {

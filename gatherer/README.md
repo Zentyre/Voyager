@@ -44,7 +44,8 @@ Gatherer in the background and opens the dashboard
 
 - **Start** / **Stop** each bot (or **Start all** / **Stop all**). A bot that
   needs a Microsoft sign-in shows the code and link right on its card.
-- **Update** downloads the latest version; **Restart** then runs it.
+- **Update** downloads the latest version; **Restart** then runs it, and starts
+  the bots that were running again. If it can't, it keeps running and says why.
 - **Shut down** disconnects every bot and closes Gatherer.
 
 Opening the launcher again while Gatherer is running just opens the

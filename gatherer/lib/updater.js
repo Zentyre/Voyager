@@ -54,17 +54,44 @@ async function update(log) {
     }
 }
 
-// Start a new copy in the background (same arguments, output to logs/) and
-// let the caller exit this one. The new copy waits for the dashboard port.
-function restart() {
-    const logs = path.join(ROOT, "logs");
-    fs.mkdirSync(logs, { recursive: true });
-    const out = fs.openSync(path.join(logs, "gatherer.log"), "a");
+// Start a new copy in the background (same arguments) and exit this one once
+// it's running. The new copy waits for the dashboard port, then starts the
+// bots in `resume` (the ones running before). Throws if it couldn't start
+// one, and this copy keeps running.
+//
+// Output: when this copy already writes to a file (Start Gatherer.vbs sends
+// it to logs\gatherer.log), the new one shares that same file handle. Opening
+// the file again doesn't work on Windows, where the launcher holds it locked
+// for writing: that failed, crashed this copy, and nothing came back.
+async function restart(resume = []) {
+    let out = "ignore";
+    let toFile = false;
+    try {
+        toFile = fs.fstatSync(1).isFile();
+    } catch (err) {
+        // no usable stdout
+    }
+    if (toFile) {
+        out = "inherit";
+    } else {
+        try {
+            const logs = path.join(ROOT, "logs");
+            fs.mkdirSync(logs, { recursive: true });
+            out = fs.openSync(path.join(logs, "gatherer.log"), "a");
+        } catch (err) {
+            out = "ignore";
+        }
+    }
     const child = spawn(process.execPath, process.argv.slice(1), {
         cwd: process.cwd(),
         detached: true,
         stdio: ["ignore", out, out],
         windowsHide: true,
+        env: { ...process.env, GATHERER_RESUME: resume.join(",") },
+    });
+    await new Promise((resolve, reject) => {
+        child.once("spawn", resolve);
+        child.once("error", reject);
     });
     child.unref();
     process.exit(0);
