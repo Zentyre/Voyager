@@ -597,7 +597,15 @@ function installActions(ctx) {
             table = await ensureStation("crafting_table", seen);
             await ctx.act(() => ctx.goTo(table.position, 2));
         }
-        const recipe = bot.recipesFor(item.id, null, 1, table)[0];
+        // The variant that was planned (cobblestone, not the cobbled deepslate
+        // that happens to be in the bag for something else), if it's craftable.
+        const usable = bot.recipesFor(item.id, null, 1, table);
+        const wanted = new Map(plan.ingredients.map((i) => [i.name, i.count]));
+        const same = (r) => {
+            const ings = kb.recipeIngredients(r);
+            return ings.length === wanted.size && ings.every((i) => wanted.get(i.name) === i.count);
+        };
+        const recipe = usable.find(same) || usable[0];
         if (!recipe) throw new Error(`no usable recipe for ${name}`);
         await bot.craft(recipe, times, table);
         ctx.log(`Crafted ${times * perCraft} ${name}.`);

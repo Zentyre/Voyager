@@ -54,14 +54,23 @@ function createPlanner(ctx) {
         visibleCache = new Map();
     }
 
-    function blockVisible(blocks) {
+    // How much effort the nearest of these blocks is, or null if none is in
+    // range. Distance counts, and every block of digging down counts again:
+    // cobblestone from the stone underfoot beats cobbled deepslate 60 blocks
+    // down, and the nearest kind of tree wins.
+    function blockEffort(blocks) {
         const key = blocks.map((b) => b.id).join(",");
         if (!visibleCache.has(key)) {
             const found = bot.findBlock({
                 matching: blocks.map((b) => b.id),
                 maxDistance: config.searchRadius,
             });
-            visibleCache.set(key, Boolean(found));
+            let effort = null;
+            if (found && bot.entity) {
+                const me = bot.entity.position;
+                effort = found.position.distanceTo(me) + Math.max(0, me.y - found.position.y - 1);
+            }
+            visibleCache.set(key, effort);
         }
         return visibleCache.get(key);
     }
@@ -135,8 +144,9 @@ function createPlanner(ctx) {
                 }
                 if (!tool) toolCost = Infinity;
             }
-            const base = blockVisible(blocks)
-                ? COST.mineVisible
+            const effort = blockEffort(blocks);
+            const base = effort !== null
+                ? COST.mineVisible + effort / 24
                 : remembered("block", blocks.map((b) => b.name))
                   ? COST.mineRemembered
                   : COST.mineHidden + rarity(blocks);
