@@ -54,9 +54,15 @@ function createContext(bot, config) {
     ctx.fmt = (pos) => `${Math.floor(pos.x)} ${Math.floor(pos.y)} ${Math.floor(pos.z)}`;
 
     // Includes worn armor and the off-hand, so equipping something
-    // doesn't make it look like we lost it.
+    // doesn't make it look like we lost it. While a furnace, chest or other
+    // screen is open, mineflayer only copies its slots back into
+    // bot.inventory when it closes, so count what the open screen shows.
+    ctx.carried = () => {
+        const w = bot.currentWindow;
+        return w && w !== bot.inventory ? w.items() : bot.inventory.items();
+    };
     ctx.countItem = (name) =>
-        [...bot.inventory.items(), ...ctx.equipped()]
+        [...ctx.carried(), ...ctx.equipped()]
             .filter((i) => i.name === name)
             .reduce((sum, i) => sum + i.count, 0);
 

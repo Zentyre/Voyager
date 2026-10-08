@@ -63,7 +63,7 @@ function installActions(ctx) {
 
             const harvestable = blocks.filter(ctx.canHarvest);
             if (harvestable.length === 0) {
-                const tool = planner.toolFor(blocks);
+                const tool = planner.toolFor(blocks, seen);
                 if (!tool) throw new Error(`no tool I can make will mine ${name}`);
                 ctx.say(`Getting a ${tool} to mine ${name}.`);
                 await obtain(tool, 1, seen);
@@ -709,14 +709,15 @@ function installActions(ctx) {
                     lastProgress = Date.now();
                     continue;
                 }
-                if (Date.now() - lastProgress > 15000) {
-                    if (!furnace.fuelItem() && furnace.fuel <= 0) {
-                        await addFuel(furnace, target - ctx.countItem(name), input);
-                        lastProgress = Date.now();
-                        continue;
-                    }
-                    throw new Error(`furnace stopped making ${name}`);
+                // Out of fuel with work left: top up right away.
+                if (!furnace.fuelItem() && furnace.fuel <= 0 && furnace.inputItem()) {
+                    const before = furnace.fuelItem()?.count || 0;
+                    await addFuel(furnace, target - ctx.countItem(name), input);
+                    if ((furnace.fuelItem()?.count || 0) === before) throw new Error(`ran out of fuel for ${name}`);
+                    lastProgress = Date.now();
+                    continue;
                 }
+                if (Date.now() - lastProgress > 15000) throw new Error(`furnace stopped making ${name}`);
                 await ctx.wait(1000);
             }
             // Leave nothing behind in the furnace that we put in.
@@ -741,20 +742,25 @@ function installActions(ctx) {
         await obtain(choice.name, ctx.countItem(choice.name) + units, seen);
     }
 
+    // The fuel slot holds one kind at a time: top up what's in it, or else put
+    // in the kind that covers the most (one log and two planks used to stop
+    // after the log). Counts come from the furnace screen, which is current
+    // while it's open; bot.inventory isn't (see ctx.countItem).
     async function addFuel(furnace, amount, input) {
-        let needed = amount - (furnace.fuelItem() ? kb.fuelValue(furnace.fuelItem().name) * furnace.fuelItem().count : 0);
-        const fuels = bot.inventory
-            .items()
-            .filter((i) => i.name !== input && kb.fuelValue(i.name) > 0)
-            .sort((a, b) => kb.fuelValue(b.name) - kb.fuelValue(a.name));
-        for (const fuel of fuels) {
-            if (needed <= 0) break;
-            const current = furnace.fuelItem();
-            if (current && current.name !== fuel.name) continue;
-            const n = Math.min(fuel.count, Math.ceil(needed / kb.fuelValue(fuel.name)));
-            await furnace.putFuel(fuel.type, null, n);
-            needed -= n * kb.fuelValue(fuel.name);
+        const current = furnace.fuelItem();
+        const needed = amount - (current ? kb.fuelValue(current.name) * current.count : 0);
+        if (needed <= 0) return;
+        const totals = new Map(); // fuel kind -> count carried
+        for (const i of furnace.items()) {
+            if (i.name !== input && kb.fuelValue(i.name) > 0) totals.set(i.name, (totals.get(i.name) || 0) + i.count);
         }
+        const value = (n) => totals.get(n) * kb.fuelValue(n);
+        const kind = current
+            ? totals.has(current.name) ? current.name : null
+            : [...totals.keys()].sort((a, b) => value(b) - value(a))[0];
+        if (!kind) return;
+        const n = Math.min(totals.get(kind), Math.ceil(needed / kb.fuelValue(kind)), 64 - (current?.count || 0));
+        if (n > 0) await furnace.putFuel(bot.registry.itemsByName[kind].id, null, n);
     }
 
     // ---------- hunting ----------

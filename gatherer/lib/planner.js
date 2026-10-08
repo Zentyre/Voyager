@@ -236,9 +236,11 @@ function createPlanner(ctx) {
         return best(name, 0, seen);
     }
 
-    function toolFor(blocks) {
+    // `seen`: what we're already in the middle of getting, so the tool can't be
+    // planned from it (an iron pickaxe made from the raw iron being mined).
+    function toolFor(blocks, seen = new Set()) {
         startSession();
-        return cheapestTools(blocks, 0, new Set()).find((t) => t.cost < Infinity)?.name;
+        return cheapestTools(blocks, 0, seen).find((t) => t.cost < Infinity)?.name;
     }
 
     // Human-readable dry run of the plan for `name`.

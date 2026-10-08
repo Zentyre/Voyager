@@ -293,7 +293,7 @@ function createBot(config, crew, reporter) {
     function snapshot() {
         const e = bot.entity;
         const counts = {};
-        if (e) for (const i of bot.inventory.items()) counts[i.name] = (counts[i.name] || 0) + i.count;
+        if (e) for (const i of ctx.carried()) counts[i.name] = (counts[i.name] || 0) + i.count;
         const t = ctx.current;
         return {
             label: config.username,
@@ -550,7 +550,7 @@ function createBot(config, crew, reporter) {
                 say(ctx.queue.length ? ctx.queue.map((t) => `${t.item}x${t.count}`).join(", ") : "Queue is empty.");
                 break;
             case "inv": {
-                const items = bot.inventory.items().map((i) => `${i.name}x${i.count}`);
+                const items = ctx.carried().map((i) => `${i.name}x${i.count}`);
                 say(items.length ? items.join(", ") : "Inventory is empty.");
                 break;
             }
