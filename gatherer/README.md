@@ -226,6 +226,7 @@ coordinate. Each keeps its own memory file (`memory/<username>.json`) either way
 | Ability    | How                                                                                       |
 |------------|-------------------------------------------------------------------------------------------|
 | **Mine**   | Finds the nearest natural block that drops the item, digs to it, and picks up the drop. Goes back to places it remembers, or explores. Prefers blocks near its own height. For one out of reach overhead (a treetop), it gets dirt, builds a pillar up, takes what's in reach, knocks drops off the leaves, and digs the pillar back down. Gives up on any block after a time limit and moves on. |
+| **Climb**  | Out of holes and up cliffs, it does whichever is quicker: dig a staircase, put blocks under itself (dirt or cobblestone), or walk round. Underground, heading back up to the surface, it tunnels straight up with a block under itself at each step instead of a staircase (one block dug a step, not three); it leaves that to the pathfinder next to water, lava or gravel. |
 | **Craft**  | Uses the game's recipe list. Gathers ingredients recursively and places a crafting table if none is nearby. |
 | **Plans ahead** | When it goes out to mine, hunt, farm or smelt something, it also gets what the tasks still in the queue will need of it, as far as its bag has room: `!armor diamond` mines all 24 diamonds in one trip, then crafts the four pieces. |
 | **Tools**  | If a block needs a better pickaxe than it has, it makes one first (wood → stone → iron). |
@@ -508,3 +509,4 @@ with its progress and what's still to place (what it has and what's in chests).
 | `lib/schematic.js`  | Reading .litematic / .schem / .nbt schematics, rotating them |
 | `lib/building.js`   | Builder: materials from chests, placing with the right facing, towers |
 | `lib/swimming.js`   | Water: air, swimming up, diving, getting out                |
+| `lib/climbing.js`   | Getting up: towers, tunnelling straight up                |

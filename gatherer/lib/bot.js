@@ -24,6 +24,7 @@ const { installArchery } = require("./archery");
 const { installBodyguard } = require("./bodyguard");
 const { installBuilding } = require("./building");
 const { installSwimming } = require("./swimming");
+const { installClimbing } = require("./climbing");
 const { createProfiles } = require("./profiles");
 const { patchBot } = require("./compat");
 const { installModSupport } = require("./mods");
@@ -154,9 +155,6 @@ function createBot(config, crew, reporter) {
         // Keep path computation bounded: per-tick budget and a hard timeout.
         const movements = new Movements(bot);
         movements.allowParkour = false;
-        // Its 1x1 tower places the block too early in the jump, which servers
-        // refuse (the bot is still in the way). climbTo in actions.js builds up instead.
-        movements.allow1by1towers = false;
         // Swimming is slow and uses air: walk round or bridge a lake when it's not far.
         movements.liquidCost = 3;
         // Never dig through farms, chests, beds, doors, etc. on the way somewhere.
@@ -188,6 +186,7 @@ function createBot(config, crew, reporter) {
             }
             return safeToBreak(block);
         };
+        installClimbing(ctx, movements);
         bot.pathfinder.setMovements(movements);
         bot.pathfinder.thinkTimeout = 10000;
         bot.pathfinder.tickTimeout = 30;
