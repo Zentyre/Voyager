@@ -348,7 +348,7 @@ function installBuilding(ctx) {
     }
 
     // Make room: put what the build doesn't need (and isn't gear or food) in a chest.
-    const GEAR = /_(pickaxe|axe|shovel|hoe|sword|helmet|chestplate|leggings|boots)$|^(bow|shield|arrow|bucket|water_bucket|torch)$/;
+    const GEAR = /_(pickaxe|axe|shovel|hoe|sword|helmet|chestplate|leggings|boots)$|^(bow|crossbow|trident|shield|totem_of_undying|elytra|arrow|spectral_arrow|tipped_arrow|bucket|water_bucket|torch|flint_and_steel)$/;
     async function makeRoom() {
         if (bot.inventory.emptySlotCount() >= 4) return;
         const need = stillNeeded();

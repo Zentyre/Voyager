@@ -41,6 +41,12 @@ function installSurvival(ctx) {
             .sort((a, b) => urgency(a) - urgency(b))[0];
     }
 
+    // A mob we ran from that is still within 24 blocks.
+    function lurking() {
+        const me = bot.entity.position;
+        return Object.values(bot.entities).find((e) => ctx.ranFrom?.(e) && e.isValid && e.position.distanceTo(me) < 24);
+    }
+
     ctx.threatNearby = () =>
         config.defend !== false && Boolean(bot.entity) && inDanger() && Boolean(nearestThreat());
 
@@ -216,17 +222,27 @@ function installSurvival(ctx) {
         if (fighting || sleeping || !bot.entity) return;
         await ctx.equipArmor();
         await ctx.extinguish();
-        for (let i = 0; i < 8 && ctx.threatNearby(); i++) {
-            const mob = nearestThreat();
-            fighting = true;
-            try {
-                await ctx.fight(mob);
-            } finally {
-                fighting = false;
-                // Don't keep chasing something we couldn't reach. Something we ran
-                // from (a creeper) stays a threat, so we run again if it follows.
-                if (mob.isValid && !ctx.ranFrom?.(mob)) ignoreUntil.set(mob.id, Date.now() + 20000);
+        const waitUntil = Date.now() + 60000;
+        for (;;) {
+            for (let i = 0; i < 8 && ctx.threatNearby(); i++) {
+                const mob = nearestThreat();
+                fighting = true;
+                try {
+                    await ctx.fight(mob);
+                } finally {
+                    fighting = false;
+                    // Don't keep chasing something we couldn't reach. Something we ran
+                    // from (a creeper) stays a threat, so we run again if it follows.
+                    if (mob.isValid && !ctx.ranFrom?.(mob)) ignoreUntil.set(mob.id, Date.now() + 20000);
+                }
             }
+            // Something we ran from still about (a creeper by the work): keep
+            // away a while for it to wander off, instead of walking straight
+            // back to it and running again. Only mid-job; idle, there's no need.
+            const lurker = ctx.busy && Date.now() < waitUntil && lurking();
+            if (!lurker) break;
+            await ctx.during(`Keeping away from the ${ctx.pretty(lurker.name)}`, () => ctx.wait(1000));
+            ctx.checkStop();
         }
         if (!seekingFood) await maybeEat();
         await maybeSleep();
