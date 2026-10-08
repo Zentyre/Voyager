@@ -199,6 +199,24 @@ details.world:not([open]) > summary::after { content: "▸"; }
 .players .p .n { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .players .p .w { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
 #alerts.on { color: var(--accent); border-color: var(--accent); }
+.facts select.profile { padding: 2px 6px; font-size: 13px; }
+.buildbox { border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.buildbox[hidden] { display: none; }
+.buildbox .line { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; align-items: baseline; }
+.buildbox form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.buildbox form select, .buildbox form input { padding: 5px 8px; font-size: 13px; }
+.buildbox form select[name=file] { flex: 1 1 160px; }
+.buildbox form input.xyz { width: 70px; }
+.buildbox form .xyzs { display: flex; gap: 4px; }
+.buildbox form .xyzs[hidden] { display: none; }
+.buildbox form label { font-size: 13px; color: var(--muted); display: flex; gap: 4px; align-items: center; }
+.buildbox .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.buildbox .btns button { padding: 5px 10px; font-size: 13px; }
+.buildbox table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.buildbox th { text-align: left; color: var(--muted); font-weight: 500; }
+.buildbox td, .buildbox th { padding: 2px 4px; border-bottom: 1px dashed var(--line); }
+.buildbox td.n, .buildbox th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.buildbox td.short { color: var(--bad); }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
 .toast.show { opacity: 1; }
 </style>
@@ -330,7 +348,7 @@ const QUICK = [["status", "Status"], ["inv", "Inventory"], ["eat", "Eat"], ["sle
 
 // Every command, for the "All commands" panel under each bot.
 const SIMPLE = [
-  ["Info", [["status", "Status"], ["queue", "Queue"], ["inv", "Inventory"], ["learned", "What it learned"], ["help", "Help"]]],
+  ["Info", [["status", "Status"], ["queue", "Queue"], ["inv", "Inventory"], ["learned", "What it learned"], ["profile", "Profile"], ["build", "Build status"], ["help", "Help"]]],
   ["Actions", [["come", "Come to me"], ["eat", "Eat"], ["sleep", "Sleep"], ["home", "Go home"], ["deposit", "Deposit in chest"],
     ["farm", "Harvest & replant"], ["water", "Place water"], ["bucket", "Fill a bucket"], ["armor", "Wear best armor"]]],
 ];
@@ -385,10 +403,35 @@ function makeCard(label) {
       <dt>Position</dt><dd><span class="coords" title="Click to copy"></span></dd>
       <dt>Holding</dt><dd class="held"></dd>
       <dt>Armor</dt><dd class="armor"></dd>
+      <dt>Profile</dt><dd><select class="profile" aria-label="Profile"></select></dd>
       <dt>Level</dt><dd class="xp"></dd>
       <dt>Record</dt><dd class="record"></dd>
       <dt>Queue</dt><dd class="queue"></dd>
     </dl>
+    <div class="buildbox" hidden>
+      <div class="line"><b>Build</b><span class="bstate muted"></span></div>
+      <div class="bprogress"></div>
+      <form class="buildform" autocomplete="off">
+        <select name="file" aria-label="Schematic"></select>
+        <button type="button" class="upload" title="Add a .litematic, .schem or .nbt file">Upload…</button>
+        <input type="file" class="uploadfile" accept=".litematic,.schem,.nbt" hidden>
+        <select name="where" aria-label="Where">
+          <option value="me">Where I stand</option>
+          <option value="here">Where the bot is</option>
+          <option value="xyz">At coordinates</option>
+        </select>
+        <span class="xyzs" hidden><input class="xyz" name="x" type="number" placeholder="x" aria-label="x"><input class="xyz" name="y" type="number" placeholder="y" aria-label="y"><input class="xyz" name="z" type="number" placeholder="z" aria-label="z"></span>
+        <select name="rotate" aria-label="Turn"><option value="0">Not turned</option><option value="90">Turned 90°</option><option value="180">Turned 180°</option><option value="270">Turned 270°</option></select>
+        <label title="Also dig out player-made blocks in the way (natural ground and plants are always cleared)"><input type="checkbox" name="clear"> clear</label>
+      </form>
+      <div class="btns">
+        <button type="button" class="primary" data-build="start">Build</button>
+        <button type="button" data-build="materials">Materials</button>
+        <button type="button" data-build="resume">Resume</button>
+        <button type="button" class="danger" data-build="stop">Stop</button>
+      </div>
+      <div class="bmaterials"></div>
+    </div>
     <details><summary class="invsum">Inventory</summary><div class="inv"></div></details>
     <form class="get" autocomplete="off">
       <input name="item" list="items" placeholder="Get item… (oak_log)" aria-label="Item to get">
@@ -440,6 +483,44 @@ function makeCard(label) {
     if (action === "stop" && !confirm(`Disconnect ${$(".name", card).textContent}?`)) return;
     control(action, label);
   });
+  card.querySelector("select.profile").addEventListener("change", (e) => {
+    command(label, `profile ${e.target.value}`);
+    toast(`${$(".name", card).textContent}: profile ${e.target.value}`);
+  });
+  const bform = card.querySelector(".buildform");
+  bform.addEventListener("submit", (e) => e.preventDefault());
+  bform.where.addEventListener("change", () => ($(".xyzs", bform).hidden = bform.where.value !== "xyz"));
+  card.querySelector(".upload").addEventListener("click", () => card.querySelector(".uploadfile").click());
+  card.querySelector(".uploadfile").addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const res = await fetch(`schematics?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      await loadSchematics(data.name);
+      toast(`Uploaded ${data.name}`);
+    } catch (err) {
+      toast("Couldn't upload: " + err.message);
+    }
+  });
+  card.querySelector(".buildbox .btns").addEventListener("click", (e) => {
+    const action = e.target.closest("button")?.dataset.build;
+    if (!action) return;
+    if (action === "stop") return command(label, "build stop");
+    if (action === "resume") return command(label, "build resume");
+    const file = bform.file.value;
+    if (!file) return toast("Upload a schematic first (or put it in the schematics folder).");
+    const where = bform.where.value === "here" ? " here"
+      : bform.where.value === "xyz" ? ` ${["x", "y", "z"].map((k) => Math.floor(Number(bform[k].value) || 0)).join(" ")}` : "";
+    const rot = bform.rotate.value !== "0" ? ` rotate ${bform.rotate.value}` : "";
+    const clear = bform.clear.checked ? " clear" : "";
+    const text = action === "materials" ? `build materials ${file}${where}${rot}` : `build ${file}${where}${rot}${clear}`;
+    command(label, text);
+    toast("Sent: " + text);
+  });
+  fillSchematicSelect(bform.file);
   card.querySelector(".coords").addEventListener("click", (e) => {
     const text = e.target.textContent;
     if (text && navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast("Copied " + text));
@@ -526,6 +607,15 @@ function renderBot(b) {
   $(".held", card).textContent = !b.online ? "–" : b.held ? pretty(b.held) : "nothing";
   $(".armor", card).textContent = !b.online ? "–" : b.armor?.length ? b.armor.map(pretty).join(", ") : "none";
   $(".xp", card).textContent = b.online && b.xp != null ? `${b.xp}` : "–";
+  const psel = $("select.profile", card);
+  const profiles = b.profiles || ["default"];
+  if (psel.dataset.list !== profiles.join(",")) {
+    psel.innerHTML = profiles.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+    psel.dataset.list = profiles.join(",");
+  }
+  if (document.activeElement !== psel) psel.value = b.profile || "default";
+  psel.disabled = !b.online;
+  renderBuild(card, b);
   $(".record", card).textContent = b.stats ? `${b.stats.kills} kills · ${b.stats.deaths} deaths` : "–";
   $(".queue", card).innerHTML = b.queue?.length
     ? `<span class="pills">${b.queue.map((q) => `<span class="pill">${esc(pretty(q.item))} ×${q.count}</span>`).join("")}</span>`
@@ -533,6 +623,44 @@ function renderBot(b) {
   const inv = b.inventory || [];
   $(".invsum", card).textContent = `Inventory · ${inv.reduce((n, i) => n + i.count, 0)} items` + (b.freeSlots != null ? ` · ${b.freeSlots} free slots` : "");
   $(".inv", card).innerHTML = inv.length ? inv.map((i) => `<span class="pill">${esc(pretty(i.name))} ×${i.count}</span>`).join("") : `<span class="muted">empty</span>`;
+}
+
+// ---------- building ----------
+let schematicFiles = [];
+function fillSchematicSelect(sel, pick) {
+  const keep = pick || sel.value;
+  sel.innerHTML = schematicFiles.length
+    ? schematicFiles.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join("")
+    : `<option value="">No schematics yet</option>`;
+  if (schematicFiles.includes(keep)) sel.value = keep;
+}
+async function loadSchematics(pick) {
+  try {
+    schematicFiles = await (await fetch("schematics")).json();
+  } catch (err) {
+    return;
+  }
+  for (const sel of document.querySelectorAll(".buildform select[name=file]")) fillSchematicSelect(sel, pick);
+}
+function renderBuild(card, b) {
+  const box = $(".buildbox", card);
+  box.hidden = !(b.online && b.builder);
+  if (box.hidden) return;
+  const s = b.build;
+  $(".bstate", box).textContent = s ? `${s.name} · ${s.state}` : "nothing yet";
+  const prog = $(".bprogress", box);
+  if (s) {
+    const pct = s.total ? Math.round((s.done / s.total) * 100) : 0;
+    const extra = [s.blocked ? `${s.blocked} in the way` : "", s.failed ? `${s.failed} failed` : "", Object.keys(s.missing || {}).length ? `missing ${Object.entries(s.missing).map(([i, n]) => `${n} ${pretty(i)}`).join(", ")}` : ""].filter(Boolean).join(" · ");
+    prog.innerHTML = `<div class="line"><span>${s.done}/${s.total} blocks${s.turns ? ` · turned ${s.turns * 90}°` : ""} · at ${s.origin.x} ${s.origin.y} ${s.origin.z}</span><span class="num">${pct}%</span></div><div class="bar task"><i style="width:${pct}%"></i></div>${extra ? `<div class="muted" style="font-size:12px">${esc(extra)}</div>` : ""}`;
+  } else {
+    prog.innerHTML = "";
+  }
+  const mats = s?.materials || [];
+  $(".bmaterials", box).innerHTML = mats.length
+    ? `<table><tr><th>Still to place</th><th class="n">need</th><th class="n">has</th><th class="n">chests</th></tr>${mats.map((m) =>
+        `<tr><td>${esc(pretty(m.item))}</td><td class="n">${m.need}</td><td class="n${m.have + m.chests < m.need ? " short" : ""}">${m.have}</td><td class="n">${m.chests}</td></tr>`).join("")}</table>`
+    : "";
 }
 
 // ---------- log ----------
@@ -907,6 +1035,7 @@ function connect() {
 }
 connect();
 loadItems();
+loadSchematics();
 // keep "Reconnecting in Ns" counting down
 setInterval(() => { for (const b of state.bots.values()) if (b.state === "reconnecting" && !b.online) renderBot(b); }, 1000);
 </script>

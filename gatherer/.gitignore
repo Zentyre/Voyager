@@ -5,3 +5,5 @@ accounts/
 memory.json
 memory.json.tmp
 logs/
+profiles/active.json
+schematics/

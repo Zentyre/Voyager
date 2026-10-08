@@ -315,11 +315,62 @@ e.g. `I died at -390 70 1310 in the overworld (Zyntharic was slain by Zombie).`
 | `!say <text>`                    | Say something in chat                         |
 | `!help`                          | List commands                                 |
 | `!quit`                          | Disconnect                                    |
+| `!profile [name]`                | Show or switch the profile (`default`, `builder`, or your own) |
+| `!build <schematic> [x y z\|here] [rotate 90\|180\|270] [clear]` | Build a schematic (builder profile) |
+| `!build` / `!build list`         | What it's building / the schematics it has    |
+| `!build materials <schematic> ...` | What it needs, carries and finds in chests nearby |
+| `!build resume` / `!build stop`  | Carry on with the last build / stop           |
 
 Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 `fire_resistance`, `regeneration`, `water_breathing`, `leaping`,
 `slow_falling`, `poison`, `turtle_master`, `weakness`, `invisibility`,
 `harming`, `slowness`.
+
+## Profiles and building
+
+A **profile** is what a bot is for, switched while it runs: `!profile builder`,
+and `!profile default` to go back (or the Profile box on its dashboard card).
+`default` is the bot's own settings; another profile lays its settings on top.
+Each bot remembers its profile across restarts. Make your own as
+`profiles/<name>.json`:
+
+```json
+{ "description": "Quiet miner", "settings": { "chatter": false, "returnHome": false } }
+```
+
+The **builder** profile builds schematics: Litematica `.litematic`, WorldEdit
+`.schem`, or structure block `.nbt` files, put in the `schematics` folder (or
+uploaded with the dashboard's Upload button).
+
+```
+!profile builder
+!build house                      builds where you stand
+!build house 120 64 -300 rotate 90
+!build materials house            what it needs before starting
+```
+
+- **Where:** the schematic's lowest north-west corner goes at the coordinates,
+  or where the player who asked is standing (the bot's own spot with `here`, or
+  if it can't see you). Litematica keeps its placement in your game, not in the
+  file, so read the corner's coordinates off your placement. `rotate` turns it
+  clockwise, facings included.
+- **Materials:** it looks in the chests and barrels within 24 blocks of the
+  build and of its home (and any listed in `"build": { "chests": [...] }`), takes
+  what it needs from them, and gathers or crafts the rest like `!get` does.
+  What it can't get is listed when it's done, and the rest is built anyway.
+- **Placing:** bottom up, solid blocks before what hangs on them, each turned
+  the way the schematic says: stairs, slabs, logs, doors, beds, trapdoors,
+  torches, signs, chests, furnaces, pistons, buttons and so on. Blocks with
+  nothing next to them get a temporary dirt pillar, taken away afterwards.
+- **What's in the way:** grass, flowers, leaves and natural ground (dirt,
+  stone, sand...) are dug out. Anything else is left alone and reported,
+  unless you add `clear`. It never digs through the build on its way around.
+- Things it can't place from an item (water, lava, portals, spawners,
+  bedrock, farmland...) are skipped and listed when it starts.
+
+On the dashboard, a bot on the builder profile gets a **Build** panel: pick or
+upload a schematic, where, turned how, then Build / Materials / Resume / Stop,
+with its progress and what's still to place (what it has and what's in chests).
 
 ## Config
 
@@ -365,6 +416,7 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `quitWhenDone`       | `false`       | Disconnect when the queue is done                                 |
 | `chatter`            | `true`        | Post progress messages in game chat                               |
 | `deathWhisper`       | `true`        | `/msg` the owner where the bot died                               |
+| `build`              | `{ "chests": [], "chestRadius": 24, "maxChests": 16, "clear": false }` | Builder: extra chests (`[{ "x": 0, "y": 64, "z": 0 }]`), how far to look for chests, and always clearing what's in the way |
 | `dashboard`          | `{ "port": 3000, "host": "127.0.0.1" }` | Web dashboard; `false` to turn it off |
 | `autoStart`          | `[]`          | With `Start Gatherer.vbs`: bots to start right away (names, or `true` for all) |
 | `tasks`              | `[]`          | `[{ "item": "oak_log", "count": 32 }, …]`                         |
@@ -427,3 +479,6 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `lib/water.js`      | Buckets and placing water                                 |
 | `lib/brewing.js`    | Water bottles and the brewing stand                       |
 | `lib/context.js`    | Shared state and helpers                                  |
+| `lib/profiles.js`   | Profiles: switching what a bot is for while it runs        |
+| `lib/schematic.js`  | Reading .litematic / .schem / .nbt schematics, rotating them |
+| `lib/building.js`   | Builder: materials from chests, placing with the right facing |

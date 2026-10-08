@@ -50,6 +50,10 @@ const DEFAULTS = {
     dashboard: { port: 3000, host: "127.0.0.1" }, // web page to watch and command the bots; false to turn off
     deathWhisper: true, // /msg the owner where a bot died
     autoStart: [], // with Start Gatherer.vbs: bots to start right away (names, or true for all)
+    // builder profile: chests to take materials from (besides any within
+    // chestRadius of the build and of home), and "clear" to dig out anything
+    // in the way (by default only natural ground and plants)
+    build: { chests: [], chestRadius: 24, maxChests: 16, clear: false },
     tasks: [],
     bots: [], // crew mode: [{ "username": "Miner" }, { "username": "Farmer", ... }]
 };

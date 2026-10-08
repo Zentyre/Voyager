@@ -13,6 +13,7 @@ const crypto = require("crypto");
 
 const PAGE = path.join(__dirname, "..", "dashboard", "index.html");
 const LOG_KEEP = 400;
+const MAX_SCHEMATIC = 50 * 1024 * 1024;
 
 // `onControl(action, bot)` (manager mode): start/stop bots, update, shut down.
 function startDashboard(options, { onCommand, onControl = null, manager = false, names = [] } = {}) {
@@ -101,6 +102,45 @@ function startDashboard(options, { onCommand, onControl = null, manager = false,
                 }
                 res.writeHead(200, { "content-type": "image/png", "cache-control": "max-age=86400" });
                 res.end(buf);
+            });
+            return;
+        }
+        if (req.method === "GET" && url.pathname === "/schematics") {
+            res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+            return res.end(JSON.stringify(require("./building").listSchematics()));
+        }
+        if (req.method === "POST" && url.pathname === "/schematics") {
+            // Upload: the file's bytes, its name in ?name=
+            const { DIR } = require("./building");
+            const { EXTENSIONS } = require("./schematic");
+            const name = path.basename(String(url.searchParams.get("name") || "")).replace(/[^\w.\- ]/g, "_");
+            const fail = (code, message) => {
+                res.writeHead(code, { "content-type": "application/json" });
+                res.end(JSON.stringify({ ok: false, error: message }));
+            };
+            if (!name || !EXTENSIONS.includes(path.extname(name).toLowerCase())) return fail(400, "only .litematic, .schem or .nbt files");
+            const chunks = [];
+            let size = 0;
+            req.on("data", (chunk) => {
+                size += chunk.length;
+                if (size > MAX_SCHEMATIC) {
+                    fail(413, "that file is too big");
+                    req.destroy();
+                } else {
+                    chunks.push(chunk);
+                }
+            });
+            req.on("end", () => {
+                if (size > MAX_SCHEMATIC) return;
+                try {
+                    fs.mkdirSync(DIR, { recursive: true });
+                    fs.writeFileSync(path.join(DIR, name), Buffer.concat(chunks));
+                    addLog("you", `Uploaded schematic ${name}.`);
+                    res.writeHead(200, { "content-type": "application/json" });
+                    res.end(JSON.stringify({ ok: true, name }));
+                } catch (err) {
+                    fail(500, err.message);
+                }
             });
             return;
         }

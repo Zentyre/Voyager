@@ -22,6 +22,8 @@ const { installBrewing } = require("./brewing");
 const { createLearning } = require("./learning");
 const { installArchery } = require("./archery");
 const { installBodyguard } = require("./bodyguard");
+const { installBuilding } = require("./building");
+const { createProfiles } = require("./profiles");
 const { patchBot } = require("./compat");
 const { installModSupport } = require("./mods");
 const { addresses } = require("./commands");
@@ -143,6 +145,9 @@ function createBot(config, crew, reporter) {
         installBrewing(ctx);
         installArchery(ctx);
         installBodyguard(ctx);
+        installBuilding(ctx);
+        ctx.profiles = createProfiles(ctx);
+        if (ctx.profiles.name !== "default") log(`Profile: ${ctx.profiles.name}.`);
 
         // Keep path computation bounded: per-tick budget and a hard timeout.
         const movements = new Movements(bot);
@@ -356,6 +361,10 @@ function createBot(config, crew, reporter) {
             home: ctx.home ? floorPos(ctx.home) : null,
             stats: ctx.learn ? (({ kills = 0, deaths = 0 }) => ({ kills, deaths }))(ctx.learn.stats()) : null,
             players: e ? playerList() : [],
+            profile: ctx.profiles?.name || "default",
+            profiles: ctx.profiles ? Object.keys(ctx.profiles.list()) : ["default"],
+            builder: Boolean(ctx.profiles?.builds),
+            build: ctx.buildStatus ? ctx.buildStatus() : null,
             gameMode: bot.game?.gameMode,
             time: bot.time?.timeOfDay,
             busy: Boolean(ctx.busy),
@@ -440,6 +449,71 @@ function createBot(config, crew, reporter) {
         return given;
     }
 
+    // ---------- building (builder profile) ----------
+
+    // build                         what it's building
+    // build list                    the schematics it has
+    // build materials [name]        what a build needs, has and finds in chests
+    // build <name> [x y z | here] [rotate 90|180|270] [clear]
+    // build resume                  carry on with the last one
+    // Without coordinates it builds where the player who asked is standing
+    // (its lowest north-west corner there), or where the bot is.
+    async function buildCommand(args, { say, runExclusive, requester, fromPlayer }) {
+        const sub = (args[0] || "").toLowerCase();
+        if (!sub) {
+            const s = ctx.buildStatus();
+            return say(s ? `${s.name}: ${s.done}/${s.total} blocks placed (${s.state}).` : `Not building anything. Schematics: ${ctx.listSchematics().join(", ") || "none (put them in the schematics folder)"}.`);
+        }
+        if (sub === "list") {
+            const files = ctx.listSchematics();
+            return say(files.length ? `Schematics: ${files.join(", ")}.` : "No schematics. Put .litematic, .schem or .nbt files in the schematics folder, or upload one on the dashboard.");
+        }
+        if (sub === "stop") {
+            ctx.queue.length = 0;
+            if (ctx.busy) ctx.stopRequested = true;
+            ctx.stopCurrentAction();
+            return say("Stopped building.");
+        }
+        if (!ctx.profiles.builds) return say(`I'm on the ${ctx.profiles.name} profile. Say ${config.commandPrefix}profile builder first.`);
+
+        let options;
+        if (sub === "resume") {
+            options = ctx.lastBuild();
+            if (!options) return say("Nothing to resume.");
+        } else {
+            const rest = sub === "materials" ? args.slice(1) : args;
+            const file = rest[0];
+            if (!file) {
+                if (sub !== "materials") return;
+                const list = await ctx.buildMaterials();
+                if (!list) return say("Not building anything; say which schematic.");
+                return say(materialsText(list));
+            }
+            const words = rest.slice(1).map((w) => w.toLowerCase());
+            const nums = words.map(Number).filter((n) => Number.isFinite(n));
+            const rotAt = words.findIndex((w) => /^rot(ate)?$/.test(w));
+            const turns = rotAt >= 0 ? Math.round((Number(words[rotAt + 1]) || 0) / 90) : 0;
+            const coords = rotAt >= 0 ? words.slice(0, rotAt).map(Number).filter(Number.isFinite) : nums;
+            let origin;
+            if (coords.length >= 3) origin = new ctx.Vec3(Math.floor(coords[0]), Math.floor(coords[1]), Math.floor(coords[2]));
+            else if (words.includes("here") || !requester || !bot.players[requester]?.entity) origin = bot.entity.position.floored();
+            else origin = bot.players[requester].entity.position.floored();
+            options = { file, origin, turns, clear: words.includes("clear") };
+            if (sub === "materials") {
+                // it looks in the chests nearby, so it's a job of its own
+                return runExclusive("check the materials", async () => say(materialsText(await ctx.buildMaterials(options))), "Checking materials");
+            }
+        }
+        await runExclusive("build", () => ctx.buildSchematic(options), `Building ${String(options.file).replace(/\.[^.]+$/, "")}`);
+    }
+
+    function materialsText(list) {
+        if (!list.length) return "Nothing left to place.";
+        const short = list.filter((m) => m.have + m.chests < m.need);
+        const top = list.slice(0, 8).map((m) => `${m.need} ${m.item}${m.have + m.chests ? ` (have ${m.have}${m.chests ? ` +${m.chests} in chests` : ""})` : ""}`);
+        return `Needs: ${top.join(", ")}${list.length > 8 ? ` and ${list.length - 8} more kinds` : ""}.${short.length ? ` To gather: ${short.length} kinds.` : ""}`;
+    }
+
     // ---------- commands (chat or terminal, plain text, no LLM) ----------
 
     const HELP = "Commands: " + [
@@ -447,6 +521,7 @@ function createBot(config, crew, reporter) {
         "brew <potion> [count] [long|strong|splash]", "sleep", "water", "bucket", "armor [material]",
         "guard [player]", "bow [arrows]", "give [item|all] [count]",
         "learned", "forget", "stop", "status", "queue", "inv", "eat", "come", "deposit", "home", "say <text>", "quit",
+        "profile [name]", "build <schematic> [x y z] [rotate 90|180|270] [clear]", "build list|materials|resume",
     ]
         .map((c) => config.commandPrefix + c)
         .join(" | ") + (crew ? ` | crew: ${config.commandPrefix}<botname> <cmd>, ${config.commandPrefix}all <cmd>, ${config.commandPrefix}crew` : "");
@@ -611,6 +686,24 @@ function createBot(config, crew, reporter) {
                 ctx.stopCurrentAction();
                 if (bot.isSleeping) bot.wake().catch(() => {});
                 say("Stopped and cleared the queue.");
+                break;
+            case "profile": {
+                const all = ctx.profiles.list();
+                if (!args[0]) {
+                    say(`Profile: ${ctx.profiles.name}. Others: ${Object.keys(all).filter((n) => n !== ctx.profiles.name).join(", ")}. Say ${config.commandPrefix}profile <name> to switch.`);
+                    break;
+                }
+                if (ctx.busy) return say(`I'm busy. Say ${config.commandPrefix}stop first.`);
+                try {
+                    const p = ctx.profiles.apply(args[0]);
+                    say(`Profile: ${ctx.profiles.name}. ${p.description}`);
+                } catch (err) {
+                    say(`Couldn't switch: ${err.message}.`);
+                }
+                break;
+            }
+            case "build":
+                await buildCommand(args, { say, runExclusive, requester, fromPlayer });
                 break;
             case "say":
                 if (args.length) bot.chat(args.join(" "));
