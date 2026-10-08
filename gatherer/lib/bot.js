@@ -613,9 +613,12 @@ function createBot(config, crew, reporter) {
         return prefix && text.startsWith(prefix) ? text.slice(prefix.length) : null;
     }
 
+    // The owner and the admins; with neither set, anyone. Minecraft names
+    // ignore case, so "zentyre" and "Zentyre" are the same player.
+    const commanders = new Set([config.owner, ...(config.admins || [])].filter(Boolean).map((n) => n.toLowerCase()));
     function fromOwner(username) {
         if (username === bot.username || crew?.members().has(username.toLowerCase())) return false;
-        return !config.owner || username === config.owner;
+        return commanders.size === 0 || commanders.has(username.toLowerCase());
     }
 
     function run(text, from, opts) {

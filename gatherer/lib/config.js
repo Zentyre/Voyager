@@ -11,6 +11,7 @@ const DEFAULTS = {
     auth: "offline",
     version: false,
     owner: "Zentyre",
+    admins: [], // more players whose chat commands the bots obey, besides the owner
     commandPrefix: "!",
     viewDistance: "normal",
     searchRadius: 110,
@@ -91,6 +92,11 @@ function loadConfig(argv) {
 function finishBotConfig(config) {
     const c = { ...config };
     delete c.bots;
+    // "owner": ["Zentyre", "Friend"] works too: the first is the owner, the rest admins.
+    const owners = Array.isArray(c.owner) ? c.owner.filter(Boolean) : [];
+    if (Array.isArray(c.owner)) c.owner = owners[0] || null;
+    const admins = typeof c.admins === "string" ? [c.admins] : Array.isArray(c.admins) ? c.admins : [];
+    c.admins = [...owners.slice(1), ...admins].filter((n) => typeof n === "string" && n.trim()).map((n) => n.trim());
     if (!c.memoryFile) c.memoryFile = path.join("memory", `${c.username}.json`);
     return c;
 }

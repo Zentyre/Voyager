@@ -3,6 +3,7 @@
     "port": 25565,
     "auth": "offline",
     "owner": "Zentyre",
+    "admins": [],
     "viewDistance": "normal",
     "searchRadius": 110,
     "chest": null,

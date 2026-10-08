@@ -3,6 +3,7 @@
     "port": 25565,
     "auth": "microsoft",
     "owner": "Zentyre",
+    "admins": [],
     "commandPrefix": "!",
 
     "viewDistance": "normal",

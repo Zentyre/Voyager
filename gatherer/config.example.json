@@ -5,6 +5,7 @@
     "auth": "offline",
     "version": false,
     "owner": "Zentyre",
+    "admins": [],
     "commandPrefix": "!",
 
     "viewDistance": "normal",

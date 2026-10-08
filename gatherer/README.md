@@ -266,7 +266,7 @@ learning off.
 ## Commands
 
 In game chat, commands start with `!` and only the owner (`Zentyre` by default)
-is obeyed. Whispers (`/msg Gatherer get oak_log`) and the terminal work with or
+and the players listed in `"admins"` are obeyed. Whispers (`/msg Gatherer get oak_log`) and the terminal work with or
 without the `!`. **A command sent by `/msg` gets its answers by `/msg`**,
 including the progress of a task queued that way, so nothing shows in public
 chat.
@@ -316,7 +316,8 @@ Potions: `awkward`, `healing`, `swiftness`, `strength`, `night_vision`,
 | `host`, `port`       | `localhost`, `25565` | Server address                                            |
 | `username`, `auth`   | `Gatherer`, `offline` | Bot account                                              |
 | `version`            | `false`       | Minecraft version, `false` = auto-detect                          |
-| `owner`              | `"Zentyre"`   | Only take commands from this player (`null` = anyone)             |
+| `owner`              | `"Zentyre"`   | Only take commands from this player (`null` = anyone, unless `admins` is set). Gets the death `/msg` |
+| `admins`             | `[]`          | More players the bots take commands from, e.g. `["Friend1", "Friend2"]`. Can be set per bot too |
 | `commandPrefix`      | `"!"`         | Chat commands must start with this                                |
 | `viewDistance`       | `"normal"`    | Chunks requested from the server: `tiny` 6, `short` 8, `normal` 10, `far` 12. More = sees further, more RAM. Capped by the server's own view-distance |
 | `searchRadius`       | `110`         | How far (blocks) to look for resources and mobs (keep under view distance × 16) |
