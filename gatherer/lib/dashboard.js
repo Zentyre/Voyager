@@ -49,6 +49,26 @@ function startDashboard(options, { onCommand, onControl = null, manager = false,
         }
     }
 
+    // Player skins, fetched from Mojang's texture server (where the game gets
+    // them) and kept, so the page can draw heads without going online itself.
+    const skins = new Map(); // hash -> Promise<Buffer|null>
+    function skin(hash) {
+        if (!skins.has(hash)) {
+            skins.set(
+                hash,
+                fetch(`https://textures.minecraft.net/texture/${hash}`, { signal: AbortSignal.timeout(8000) })
+                    .then((r) => (r.ok ? r.arrayBuffer() : null))
+                    .then((buf) => (buf ? Buffer.from(buf) : null))
+                    .catch(() => null)
+                    .then((buf) => {
+                        if (!buf) setTimeout(() => skins.delete(hash), 60000); // try again later
+                        return buf;
+                    })
+            );
+        }
+        return skins.get(hash);
+    }
+
     const server = http.createServer((req, res) => {
         const url = new URL(req.url, "http://localhost");
         if (!authorized(req, url)) {
@@ -69,6 +89,18 @@ function startDashboard(options, { onCommand, onControl = null, manager = false,
             req.on("close", () => {
                 clearInterval(ping);
                 clients.delete(res);
+            });
+            return;
+        }
+        const skinPath = /^\/skin\/([0-9a-f]{16,80})$/.exec(url.pathname);
+        if (req.method === "GET" && skinPath) {
+            skin(skinPath[1]).then((buf) => {
+                if (!buf) {
+                    res.writeHead(404, { "content-type": "text/plain" });
+                    return res.end("no skin");
+                }
+                res.writeHead(200, { "content-type": "image/png", "cache-control": "max-age=86400" });
+                res.end(buf);
             });
             return;
         }

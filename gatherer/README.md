@@ -75,7 +75,8 @@ Use item names as they appear in `/give`: `raw_iron`, `iron_ingot`,
 
 While the bots run, open **http://localhost:3000** in a browser on the same
 computer. You get a card per bot with:
-- health, food, position (click to copy), what it's holding and wearing, inventory;
+- its head (from its skin), health, food, position (click to copy), what it's
+  holding and wearing, its level, its kills and deaths on this server, inventory;
 - **Now**: the step it's on ("Walking to the crafting table", "Crafting 4 oak
   planks", "Fighting a zombie") and for how long, with what that step is for
   underneath ("for 3 diamond › 1 iron pickaxe › 3 iron ingot");
@@ -86,6 +87,16 @@ computer. You get a card per bot with:
   dropdowns and boxes for the ones that take options (plan, plant, breed,
   brew, armor set, guard, bow, give, say). "Come to me", "Give me" and
   "Guard" with no name act on the owner.
+
+The **World** panel shows the in-game day, time and weather, everyone online
+(with their heads, ping, and how far they are from the nearest bot that can
+see them), and a map: the bots (facing which way), the players they can see,
+and their homes. Hover for coordinates; click a bot to jump to its card.
+Skins come from Mojang's texture server, fetched by Gatherer itself.
+
+**Alerts** (top bar) turns on desktop notifications for while the tab is in
+the background: a bot died, finished its tasks, gave up on one, got badly
+hurt, disconnected, or needs a Microsoft sign-in.
 
 The bar at the top sends any command (the same ones as in chat, without the
 `!`) to one bot, all bots, or the crew (which splits gathering jobs). The

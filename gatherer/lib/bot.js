@@ -315,6 +315,24 @@ function createBot(config, crew, reporter) {
         ctx.tell(task.replyTo, `Got ${task.count} ${task.item}.`);
     }
 
+    // A skin is "http://textures.minecraft.net/texture/<hash>"; the dashboard
+    // fetches it by the hash.
+    const skinHash = (player) => /\/texture\/([0-9a-f]{16,})$/.exec(player?.skinData?.url || "")?.[1] || null;
+    const floorPos = (p) => ({ x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z) });
+
+    // Everyone else on the server: the player list, and where they are if
+    // this bot can see them.
+    function playerList() {
+        return Object.values(bot.players)
+            .filter((p) => p.username && p.username !== bot.username)
+            .map((p) => ({
+                name: p.username,
+                ping: p.ping ?? null,
+                skin: skinHash(p),
+                pos: p.entity?.position ? floorPos(p.entity.position) : null,
+            }));
+    }
+
     // Everything the dashboard shows about this bot.
     function snapshot() {
         const e = bot.entity;
@@ -330,6 +348,14 @@ function createBot(config, crew, reporter) {
             food: e ? bot.food : null,
             position: e ? { x: Math.floor(e.position.x), y: Math.floor(e.position.y), z: Math.floor(e.position.z) } : null,
             dimension: String(bot.game?.dimension || "").replace(/^minecraft:/, ""),
+            yaw: e ? bot.entity.yaw : null,
+            skin: skinHash(bot.players?.[bot.username]),
+            xp: e ? bot.experience?.level ?? null : null,
+            weather: bot.thunderState > 0 ? "thunder" : bot.isRaining ? "rain" : "clear",
+            day: bot.time?.day ?? null,
+            home: ctx.home ? floorPos(ctx.home) : null,
+            stats: ctx.learn ? (({ kills = 0, deaths = 0 }) => ({ kills, deaths }))(ctx.learn.stats()) : null,
+            players: e ? playerList() : [],
             gameMode: bot.game?.gameMode,
             time: bot.time?.timeOfDay,
             busy: Boolean(ctx.busy),
@@ -347,10 +373,22 @@ function createBot(config, crew, reporter) {
     }
 
     if (reporter) {
-        const timer = setInterval(() => reporter.status(snapshot()), 1000);
+        // A status that can't be put together (mid-login, say) skips a beat;
+        // it must never take the bot down.
+        const timer = setInterval(() => {
+            try {
+                reporter.status(snapshot());
+            } catch (err) {
+                // next second
+            }
+        }, 1000);
         bot.once("end", () => {
             clearInterval(timer);
-            reporter.status({ ...snapshot(), online: false });
+            try {
+                reporter.status({ ...snapshot(), online: false });
+            } catch (err) {
+                reporter.status({ label: config.username, name: bot.username || config.username, online: false });
+            }
         });
     }
 

@@ -420,6 +420,7 @@ function createLearning(ctx) {
         markUnreachable,
         isUnreachable,
         count,
+        stats: () => ({ ...mem.stats }),
         value,
         ema,
         save,

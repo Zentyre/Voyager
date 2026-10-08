@@ -170,6 +170,35 @@ body.managed .power { display: inline-block; }
 .signin code { font-size: 17px; font-weight: 700; letter-spacing: 1px; }
 .signin a { color: var(--info); }
 .empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--line); border-radius: var(--radius); }
+.avatar { position: relative; flex: none; width: 28px; height: 28px; }
+.avatar .dot { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border: 2px solid var(--panel); box-sizing: content-box; }
+/* A player's face: the 8x8 face of their skin plus the hat layer on top. */
+.face { display: inline-block; flex: none; width: 28px; height: 28px; border-radius: 4px; image-rendering: pixelated;
+  background-size: 800% 800%; background-repeat: no-repeat; background-color: var(--panel-2);
+  color: #fff; font-weight: 700; text-align: center; overflow: hidden; vertical-align: middle; }
+.face.sm { width: 16px; height: 16px; border-radius: 3px; font-size: 10px; line-height: 16px; }
+.face.letter { line-height: 28px; font-size: 14px; }
+.face.sm.letter { line-height: 16px; font-size: 10px; }
+#log .row { grid-template-columns: auto auto auto 1fr; align-items: center; }
+#log .row .face { margin-right: -4px; }
+.card { transition: box-shadow 0.2s, border-color 0.2s; }
+.card.hurt { border-color: var(--bad); box-shadow: 0 0 0 2px color-mix(in srgb, var(--bad) 40%, transparent); }
+.card.flash { border-color: var(--info); box-shadow: 0 0 0 2px color-mix(in srgb, var(--info) 40%, transparent); }
+details.world:not([open]) > summary { border-bottom: 0; }
+details.world[open] { border-bottom: 1px solid var(--line); }
+details.world > summary { list-style: none; cursor: pointer; }
+details.world > summary::-webkit-details-marker { display: none; }
+details.world > summary::after { content: "▾"; color: var(--muted); }
+details.world:not([open]) > summary::after { content: "▸"; }
+#worldInfo { font-size: 12px; margin-right: auto; }
+.mapwrap { position: relative; margin: 8px 12px 0; }
+#map { display: block; width: 100%; height: 220px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); cursor: default; }
+.maptip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 7px; font-size: 12px; white-space: nowrap; display: none; z-index: 2; }
+.players { padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto; font-size: 13px; }
+.players .p { display: flex; align-items: center; gap: 8px; }
+.players .p .n { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.players .p .w { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+#alerts.on { color: var(--accent); border-color: var(--accent); }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
 .toast.show { opacity: 1; }
 </style>
@@ -182,6 +211,7 @@ body.managed .power { display: inline-block; }
     <input id="cmdText" placeholder="Command, e.g. get oak_log 64 · status · guard Zentyre" aria-label="Command">
     <button class="primary">Send</button>
   </form>
+  <button type="button" id="alerts" title="Desktop notifications when a bot dies, finishes its tasks, needs a sign-in or disconnects (while this tab is in the background)">Alerts: off</button>
   <div class="manage">
     <button type="button" data-control="startAll">Start all</button>
     <button type="button" data-control="stopAll">Stop all</button>
@@ -193,6 +223,11 @@ body.managed .power { display: inline-block; }
 <main>
   <section id="bots"><div class="empty">Waiting for bots…</div></section>
   <aside>
+    <details class="world" id="world" open>
+      <summary class="head"><strong>World</strong><span id="worldInfo" class="muted"></span></summary>
+      <div class="mapwrap"><canvas id="map" aria-label="Map of the bots and players nearby"></canvas><div id="mapTip" class="maptip"></div></div>
+      <div id="players" class="players"></div>
+    </details>
     <div class="head"><strong>Activity</strong><select id="logFilter" aria-label="Show log for"><option value="">All bots</option></select><button type="button" id="clearLog" title="Clear the activity log">Clear</button></div>
     <div id="log"></div>
   </aside>
@@ -205,6 +240,33 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const pretty = (s) => String(s || "").replace(/_/g, " ");
 const duration = (s) => (s == null ? "" : s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s` : `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, "0")}m`);
+
+// ---------- player faces ----------
+// The face is the 8x8 square at (8, 8) of a 64x64 skin, the hat layer the one
+// at (40, 8): as background positions, 8/56 and 40/56 of the way across.
+function nameColor(name) {
+  let h = 0;
+  for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return `hsl(${h} 45% 42%)`;
+}
+function faceHTML(skin, name, small = false) {
+  const cls = "face" + (small ? " sm" : "");
+  if (!skin) return `<span class="${cls} letter" style="background-color:${nameColor(name)}" aria-hidden="true">${esc(String(name || "?")[0].toUpperCase())}</span>`;
+  const url = `url(skin/${skin})`;
+  return `<span class="${cls}" style="background-image:${url},${url};background-position:71.4286% 14.2857%,14.2857% 14.2857%" aria-hidden="true"></span>`;
+}
+const skinImages = new Map();
+function skinImage(skin) {
+  if (!skinImages.has(skin)) {
+    const img = new Image();
+    img.onload = () => requestMap();
+    img.src = "skin/" + skin;
+    skinImages.set(skin, img);
+  }
+  const img = skinImages.get(skin);
+  return img.complete && img.naturalWidth ? img : null;
+}
+const botNames = () => new Set([...state.bots.values()].flatMap((b) => [b.name, b.label]).filter(Boolean).map((n) => n.toLowerCase()));
 
 function toast(text) {
   const el = $("#toast");
@@ -311,7 +373,7 @@ function makeCard(label) {
   card.className = "card";
   card.dataset.label = label;
   card.innerHTML = `
-    <div class="top"><span class="dot"></span><span class="name"></span><span class="label"></span><span class="chip"></span><button type="button" class="power"></button></div>
+    <div class="top"><span class="avatar"><span class="face"></span><span class="dot"></span></span><span class="name"></span><span class="label"></span><span class="chip"></span><button type="button" class="power"></button></div>
     <div class="signin"></div>
     <div class="bars">
       <span>Health</span><div class="bar health"><i></i></div><span class="num hp"></span>
@@ -323,6 +385,8 @@ function makeCard(label) {
       <dt>Position</dt><dd><span class="coords" title="Click to copy"></span></dd>
       <dt>Holding</dt><dd class="held"></dd>
       <dt>Armor</dt><dd class="armor"></dd>
+      <dt>Level</dt><dd class="xp"></dd>
+      <dt>Record</dt><dd class="record"></dd>
       <dt>Queue</dt><dd class="queue"></dd>
     </dl>
     <details><summary class="invsum">Inventory</summary><div class="inv"></div></details>
@@ -392,6 +456,12 @@ function renderBot(b) {
     root.appendChild(card);
   }
   card.classList.toggle("offline", !b.online);
+  const face = $(".avatar .face", card);
+  const faceKey = `${b.skin || ""}|${b.name || b.label}`;
+  if (face.dataset.key !== faceKey) {
+    face.outerHTML = faceHTML(b.skin, b.name || b.label);
+    $(".avatar .face", card).dataset.key = faceKey;
+  }
   $(".top .dot", card).className = "dot " + (b.online ? "on" : "off");
   $(".name", card).textContent = b.name || b.label;
   $(".label", card).textContent = b.name && b.name !== b.label ? b.label : "";
@@ -455,6 +525,8 @@ function renderBot(b) {
   $(".coords", card).title = p ? `${pretty(b.dimension) || "world"} · click to copy` : "";
   $(".held", card).textContent = !b.online ? "–" : b.held ? pretty(b.held) : "nothing";
   $(".armor", card).textContent = !b.online ? "–" : b.armor?.length ? b.armor.map(pretty).join(", ") : "none";
+  $(".xp", card).textContent = b.online && b.xp != null ? `${b.xp}` : "–";
+  $(".record", card).textContent = b.stats ? `${b.stats.kills} kills · ${b.stats.deaths} deaths` : "–";
   $(".queue", card).innerHTML = b.queue?.length
     ? `<span class="pills">${b.queue.map((q) => `<span class="pill">${esc(pretty(q.item))} ×${q.count}</span>`).join("")}</span>`
     : `<span class="muted">empty</span>`;
@@ -469,7 +541,8 @@ function logRow(entry) {
   const bot = state.bots.get(entry.bot);
   const who = entry.bot === "you" ? "You" : bot?.name || entry.bot;
   const bad = /couldn't|error|died|kicked|disconnect|refus|won't/i.test(entry.text);
-  return `<div class="row${entry.bot === "you" ? " you" : ""}${bad ? " bad" : ""}" data-bot="${esc(entry.bot)}"><span class="t">${time(entry.t)}</span><span class="b">${esc(who)}</span><span class="msg">${esc(entry.text)}</span></div>`;
+  const face = bot ? faceHTML(bot.skin, who, true) : "<span></span>";
+  return `<div class="row${entry.bot === "you" ? " you" : ""}${bad ? " bad" : ""}" data-bot="${esc(entry.bot)}"><span class="t">${time(entry.t)}</span>${face}<span class="b">${esc(who)}</span><span class="msg">${esc(entry.text)}</span></div>`;
 }
 // Newest first, so the latest is always at the top without scrolling.
 function renderLog() {
@@ -480,6 +553,7 @@ function renderLog() {
   el.scrollTop = 0;
 }
 function addLog(entry) {
+  logAlert(entry);
   state.logs.push(entry);
   if (state.logs.length > 400) state.logs.shift();
   const f = $("#logFilter").value;
@@ -513,6 +587,289 @@ async function loadItems() {
   }
 }
 
+// ---------- world: time, weather, players, map ----------
+function flashCard(label, cls) {
+  const card = $(`#bots [data-label="${CSS.escape(label)}"]`);
+  if (!card) return;
+  card.classList.add(cls);
+  setTimeout(() => card.classList.remove(cls), 700);
+}
+
+function clock(t) {
+  const hours = Math.floor((t / 1000 + 6) % 24);
+  const minutes = Math.floor(((t % 1000) * 60) / 1000);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+// Everyone on the server, from all the bots' player lists; where they are,
+// if some bot can see them.
+function allPlayers() {
+  const mine = botNames();
+  const seen = new Map();
+  for (const b of state.bots.values()) {
+    if (!b.online) continue;
+    for (const p of b.players || []) {
+      if (mine.has(p.name.toLowerCase())) continue;
+      const near = p.pos && b.position ? Math.round(Math.hypot(p.pos.x - b.position.x, p.pos.z - b.position.z)) : null;
+      const entry = { ...p, dimension: b.dimension, near: near != null ? { bot: b.name || b.label, distance: near } : null };
+      const old = seen.get(p.name);
+      if (!old || (entry.near && (!old.near || entry.near.distance < old.near.distance))) seen.set(p.name, entry);
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function renderWorld() {
+  const online = [...state.bots.values()].filter((b) => b.online);
+  document.title = state.bots.size ? `Gatherer · ${online.length}/${state.bots.size} online` : "Gatherer Dashboard";
+  const ref = online.find((b) => /overworld/.test(b.dimension || "")) || online[0];
+  const info = [];
+  if (ref && ref.time != null) {
+    const night = ref.time >= 13000 && ref.time < 23000;
+    if (ref.day != null) info.push(`Day ${ref.day}`);
+    info.push(`${clock(ref.time)}${night ? " (night)" : ""}`);
+    info.push({ clear: "clear", rain: "rain", thunder: "thunderstorm" }[ref.weather] || "");
+  }
+  $("#worldInfo").textContent = info.filter(Boolean).join(" · ");
+  const players = allPlayers();
+  $("#players").innerHTML = online.length
+    ? players.length
+      ? players.map((p) => {
+          const where = p.near ? `${p.near.distance} m from ${p.near.bot}` : "not in sight";
+          const ping = p.ping != null ? ` · ${p.ping} ms` : "";
+          return `<div class="p" title="${esc(p.name)}${p.pos ? ` at ${p.pos.x} ${p.pos.y} ${p.pos.z}` : ""}">${faceHTML(p.skin, p.name, true)}<span class="n">${esc(p.name)}</span><span class="w">${esc(where + ping)}</span></div>`;
+        }).join("")
+      : `<div class="muted">No other players online.</div>`
+    : `<div class="muted">No bot online to see the server.</div>`;
+  requestMap();
+}
+
+// A top-down map: north up, east right, scaled to fit the bots, the players
+// they can see, and their homes.
+let mapQueued = false;
+let mapTargets = [];
+function requestMap() {
+  if (mapQueued) return;
+  mapQueued = true;
+  requestAnimationFrame(() => {
+    mapQueued = false;
+    drawMap();
+  });
+}
+function drawMap() {
+  const canvas = $("#map");
+  if (!canvas || !$("#world").open) return;
+  const css = getComputedStyle(document.documentElement);
+  const color = (name) => css.getPropertyValue(name).trim();
+  const ratio = window.devicePixelRatio || 1;
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  if (canvas.width !== Math.round(W * ratio) || canvas.height !== Math.round(H * ratio)) {
+    canvas.width = Math.round(W * ratio);
+    canvas.height = Math.round(H * ratio);
+  }
+  const g = canvas.getContext("2d");
+  g.setTransform(ratio, 0, 0, ratio, 0, 0);
+  g.clearRect(0, 0, W, H);
+  g.imageSmoothingEnabled = false;
+  g.font = "11px system-ui, sans-serif";
+  mapTargets = [];
+
+  const bots = [...state.bots.values()].filter((b) => b.online && b.position);
+  if (!bots.length) {
+    g.fillStyle = color("--muted");
+    g.textAlign = "center";
+    g.fillText("No bots online", W / 2, H / 2);
+    return;
+  }
+  // The dimension most bots are in; the others are listed underneath.
+  const counts = {};
+  for (const b of bots) counts[b.dimension] = (counts[b.dimension] || 0) + 1;
+  const dim = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+  const here = bots.filter((b) => b.dimension === dim);
+  const players = allPlayers().filter((p) => p.pos && p.dimension === dim);
+  const homes = [];
+  for (const b of here) if (b.home && !homes.some((h) => h.x === b.home.x && h.z === b.home.z)) homes.push(b.home);
+
+  const xs = [...here.map((b) => b.position.x), ...players.map((p) => p.pos.x), ...homes.map((h) => h.x)];
+  const zs = [...here.map((b) => b.position.z), ...players.map((p) => p.pos.z), ...homes.map((h) => h.z)];
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+  const span = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs), 32) * 1.3 + 16;
+  const scale = Math.min(W, H) / span; // pixels per block
+  const sx = (x) => W / 2 + (x - cx) * scale, sz = (z) => H / 2 + (z - cz) * scale;
+
+  // Grid: chunk lines when zoomed in, coarser further out.
+  const step = [16, 64, 256, 1024, 4096].find((s) => s * scale >= 28) || 16384;
+  g.strokeStyle = color("--line");
+  g.lineWidth = 1;
+  g.beginPath();
+  for (let x = Math.ceil((cx - W / 2 / scale) / step) * step; sx(x) < W; x += step) { g.moveTo(Math.round(sx(x)) + 0.5, 0); g.lineTo(Math.round(sx(x)) + 0.5, H); }
+  for (let z = Math.ceil((cz - H / 2 / scale) / step) * step; sz(z) < H; z += step) { g.moveTo(0, Math.round(sz(z)) + 0.5); g.lineTo(W, Math.round(sz(z)) + 0.5); }
+  g.stroke();
+
+  // Scale bar and north.
+  g.fillStyle = color("--muted");
+  g.strokeStyle = color("--muted");
+  g.textAlign = "left";
+  g.beginPath();
+  g.moveTo(8, H - 10); g.lineTo(8 + step * scale, H - 10);
+  g.moveTo(8, H - 14); g.lineTo(8, H - 6); g.moveTo(8 + step * scale, H - 14); g.lineTo(8 + step * scale, H - 6);
+  g.stroke();
+  g.fillText(`${step} blocks`, 12 + step * scale, H - 6);
+  g.textAlign = "right";
+  g.fillText(`N ↑  ·  ${pretty(dim) || "world"}`, W - 8, 14);
+  const elsewhere = bots.filter((b) => b.dimension !== dim);
+  if (elsewhere.length) g.fillText(elsewhere.map((b) => `${b.name || b.label}: ${pretty(b.dimension)}`).join(", "), W - 8, H - 6);
+
+  const face = (skin, name, x, y, size) => {
+    const img = skin && skinImage(skin);
+    if (img) {
+      g.drawImage(img, 8, 8, 8, 8, x - size / 2, y - size / 2, size, size);
+      g.drawImage(img, 40, 8, 8, 8, x - size / 2, y - size / 2, size, size);
+    } else {
+      g.fillStyle = nameColor(name);
+      g.fillRect(x - size / 2, y - size / 2, size, size);
+      g.fillStyle = "#fff";
+      g.textAlign = "center";
+      g.font = `bold ${Math.round(size * 0.65)}px system-ui, sans-serif`;
+      g.fillText(String(name)[0].toUpperCase(), x, y + size * 0.24);
+      g.font = "11px system-ui, sans-serif";
+    }
+  };
+  const label = (text, x, y, muted) => {
+    g.textAlign = "center";
+    g.fillStyle = color(muted ? "--muted" : "--text");
+    g.fillText(text, x, y);
+  };
+
+  for (const h of homes) {
+    const x = sx(h.x), y = sz(h.z);
+    g.fillStyle = color("--muted");
+    g.beginPath();
+    g.moveTo(x, y - 6); g.lineTo(x + 6, y); g.lineTo(x + 4, y); g.lineTo(x + 4, y + 5); g.lineTo(x - 4, y + 5); g.lineTo(x - 4, y); g.lineTo(x - 6, y);
+    g.closePath();
+    g.fill();
+    mapTargets.push({ x, y, r: 7, text: `Home (${h.x} ${h.y} ${h.z})` });
+  }
+  for (const p of players) {
+    const x = sx(p.pos.x), y = sz(p.pos.z);
+    face(p.skin, p.name, x, y, 12);
+    label(p.name, x, y + 17, true);
+    mapTargets.push({ x, y, r: 8, text: `${p.name} (${p.pos.x} ${p.pos.y} ${p.pos.z})` });
+  }
+  for (const b of here) {
+    const x = sx(b.position.x), y = sz(b.position.z);
+    const name = b.name || b.label;
+    if (b.yaw != null) {
+      // facing: mineflayer's yaw 0 looks north (-z)
+      const dx = -Math.sin(b.yaw), dz = -Math.cos(b.yaw);
+      g.fillStyle = color("--info");
+      g.beginPath();
+      g.moveTo(x + dx * 15, y + dz * 15);
+      g.lineTo(x + dx * 9 - dz * 4, y + dz * 9 + dx * 4);
+      g.lineTo(x + dx * 9 + dz * 4, y + dz * 9 - dx * 4);
+      g.closePath();
+      g.fill();
+    }
+    g.fillStyle = color(b.ward ? "--warn" : b.busy ? "--info" : "--accent");
+    g.fillRect(x - 10, y - 10, 20, 20);
+    face(b.skin, name, x, y, 16);
+    label(name, x, y + 22, false);
+    mapTargets.push({ x, y, r: 11, label: b.label, text: `${name} (${b.position.x} ${b.position.y} ${b.position.z})${b.doing?.step ? " · " + b.doing.step : ""}` });
+  }
+}
+function mapTargetAt(e) {
+  const r = $("#map").getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  let best = null;
+  for (const t of mapTargets) {
+    const d = Math.hypot(t.x - x, t.y - y);
+    if (d <= t.r + 3 && (!best || d < best.d)) best = { ...t, d };
+  }
+  return best ? { ...best, mx: x, my: y } : null;
+}
+$("#map").addEventListener("mousemove", (e) => {
+  const hit = mapTargetAt(e);
+  const tip = $("#mapTip");
+  $("#map").style.cursor = hit?.label ? "pointer" : "default";
+  if (!hit) return (tip.style.display = "none");
+  tip.textContent = hit.text;
+  tip.style.display = "block";
+  tip.style.left = Math.max(0, Math.min(hit.mx + 12, $("#map").clientWidth - tip.offsetWidth)) + "px";
+  tip.style.top = hit.my + 12 + "px";
+});
+$("#map").addEventListener("mouseleave", () => ($("#mapTip").style.display = "none"));
+$("#map").addEventListener("click", (e) => {
+  const hit = mapTargetAt(e);
+  if (!hit?.label) return;
+  const card = $(`#bots [data-label="${CSS.escape(hit.label)}"]`);
+  card?.scrollIntoView({ behavior: "smooth", block: "center" });
+  flashCard(hit.label, "flash");
+});
+window.addEventListener("resize", requestMap);
+const world = $("#world");
+try {
+  world.open = localStorage.getItem("world") !== "0";
+} catch (err) {}
+world.addEventListener("toggle", () => {
+  try {
+    localStorage.setItem("world", world.open ? "1" : "0");
+  } catch (err) {}
+  requestMap();
+});
+
+// ---------- desktop notifications ----------
+// Only while this tab is in the background: when it's in front, the log says it.
+let alertsOn = false;
+try {
+  alertsOn = localStorage.getItem("alerts") === "1" && "Notification" in window && Notification.permission === "granted";
+} catch (err) {}
+function showAlerts() {
+  $("#alerts").textContent = "Alerts: " + (alertsOn ? "on" : "off");
+  $("#alerts").classList.toggle("on", alertsOn);
+}
+$("#alerts").addEventListener("click", async () => {
+  if (!("Notification" in window)) return toast("This browser can't show notifications.");
+  if (!alertsOn && Notification.permission !== "granted") {
+    const answer = await Notification.requestPermission();
+    if (answer !== "granted") return toast("Notifications are blocked for this page in the browser's settings.");
+  }
+  alertsOn = !alertsOn;
+  try {
+    localStorage.setItem("alerts", alertsOn ? "1" : "0");
+  } catch (err) {}
+  showAlerts();
+  toast(alertsOn ? "You'll get a notification when something happens while this tab is in the background." : "Alerts off.");
+});
+showAlerts();
+const lastAlert = new Map();
+function notify(key, title, body) {
+  if (!alertsOn || document.visibilityState === "visible") return;
+  const now = Date.now();
+  if (now - (lastAlert.get(key) || 0) < 30000) return; // not the same thing over and over
+  lastAlert.set(key, now);
+  try {
+    const n = new Notification(title, { body, tag: key });
+    n.onclick = () => {
+      window.focus();
+      n.close();
+    };
+  } catch (err) {}
+}
+function logAlert(entry) {
+  const bot = state.bots.get(entry.bot);
+  if (!bot) return;
+  const name = bot.name || bot.label;
+  if (/^Died\b/.test(entry.text)) notify(`died:${entry.bot}`, `${name} died`, entry.text);
+  else if (/^All tasks done/.test(entry.text)) notify(`done:${entry.bot}`, `${name} is done`, "All tasks done.");
+  else if (/^Couldn't get /.test(entry.text)) notify(`gaveup:${entry.bot}`, `${name} gave up`, entry.text);
+}
+function statusAlert(prev, b) {
+  const name = b.name || b.label;
+  if (b.signIn && !prev?.signIn) notify(`signin:${b.label}`, `${name} needs a sign-in`, `Enter ${b.signIn.code} at ${b.signIn.uri}`);
+  if (prev?.online && !b.online && b.state !== "stopped") notify(`offline:${b.label}`, `${name} disconnected`, b.state === "reconnecting" ? "Reconnecting by itself." : "");
+  if (prev?.online && b.online && b.health <= 6 && prev.health > 6) notify(`hurt:${b.label}`, `${name} is badly hurt`, `Health ${b.health}/20`);
+}
+
 // ---------- live updates ----------
 function connect() {
   const es = new EventSource("events");
@@ -528,14 +885,19 @@ function connect() {
     for (const b of state.bots.values()) renderBot(b);
     renderTargets();
     renderLog();
+    renderWorld();
   });
   es.addEventListener("status", (e) => {
     const b = JSON.parse(e.data);
-    const known = state.bots.has(b.label);
-    const renamed = known && state.bots.get(b.label).name !== b.name;
+    const prev = state.bots.get(b.label);
+    const known = Boolean(prev);
+    const renamed = known && prev.name !== b.name;
     state.bots.set(b.label, b);
     renderBot(b);
     if (!known || renamed) renderTargets();
+    statusAlert(prev, b);
+    if (prev?.online && b.online && b.health < prev.health) flashCard(b.label, "hurt");
+    renderWorld();
   });
   es.addEventListener("log", (e) => addLog(JSON.parse(e.data)));
   es.addEventListener("clear", () => {
