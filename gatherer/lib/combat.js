@@ -137,7 +137,7 @@ function installCombat(ctx) {
                 if (distance > maxDistance || offLeash(leash)) return; // it left, or we strayed
                 if (isHostile(mob) && bot.health <= config.fleeHealth) {
                     raiseShield(false);
-                    await retreat(mob);
+                    await ctx.during("Too hurt: backing off to eat", () => retreat(mob));
                     throw new Error(`too hurt to keep fighting the ${mob.name}`);
                 }
 
@@ -261,14 +261,10 @@ function installCombat(ctx) {
         const deathsBefore = ctx.deaths;
         const { style, context } = chooseStyle(mob);
         let won = false;
+        const step = style === "flee" ? `Running from a ${ctx.pretty(mob.name)}` : `Fighting a ${ctx.pretty(mob.name)}${style === "bow" ? " with my bow" : ""}`;
         try {
-            if (style === "flee") {
-                await flee(mob);
-            } else {
-                ctx.log(`Fighting ${mob.name} (${style}).`);
-                await attack(mob, { timeoutMs: style === "bow" ? 40000 : 20000, maxDistance, style, leash });
-                won = !mob.isValid;
-            }
+            await ctx.during(step, () => fightAs(style, mob, maxDistance, leash));
+            won = style !== "flee" && !mob.isValid;
         } catch (err) {
             if (err instanceof ctx.Stopped) throw err;
             ctx.log(err.message);
@@ -282,6 +278,15 @@ function installCombat(ctx) {
             if (bot.health < startHealth - 4) learn.addDanger(bot.entity.position, 0.5);
         }
         return won;
+    }
+
+    async function fightAs(style, mob, maxDistance, leash) {
+        if (style === "flee") {
+            await flee(mob);
+        } else {
+            ctx.log(`Fighting ${mob.name} (${style}).`);
+            await attack(mob, { timeoutMs: style === "bow" ? 40000 : 20000, maxDistance, style, leash });
+        }
     }
 
     // Hunting: animals always get critical hits (fewer swings, less chasing);

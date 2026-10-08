@@ -108,6 +108,16 @@ main { padding: 16px; display: grid; gap: 16px; grid-template-columns: minmax(0,
 .facts dd { margin: 0; overflow-wrap: anywhere; }
 .coords { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; cursor: pointer; }
 .coords:hover { text-decoration: underline; }
+.now { border-left: 3px solid var(--info); background: var(--panel-2); border-radius: 6px; padding: 6px 9px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.now[hidden] { display: none; }
+.now.idle { border-left-color: var(--line); }
+.now.guarding { border-left-color: var(--warn); }
+.now .head { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.now .what { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.now.idle .what { color: var(--muted); font-weight: normal; }
+.now .for { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.now .goals { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.now .tag { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 .task { display: flex; flex-direction: column; gap: 4px; }
 .task .line { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
 .muted { color: var(--muted); }
@@ -194,6 +204,7 @@ const state = { bots: new Map(), logs: [] };
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const pretty = (s) => String(s || "").replace(/_/g, " ");
+const duration = (s) => (s == null ? "" : s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s` : `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, "0")}m`);
 
 function toast(text) {
   const el = $("#toast");
@@ -306,6 +317,7 @@ function makeCard(label) {
       <span>Health</span><div class="bar health"><i></i></div><span class="num hp"></span>
       <span>Food</span><div class="bar food"><i></i></div><span class="num fd"></span>
     </div>
+    <div class="now" hidden><div class="head"><span class="tag">Now</span><span class="what"></span><span class="for"></span></div><div class="goals"></div></div>
     <div class="task"></div>
     <dl class="facts">
       <dt>Position</dt><dd><span class="coords" title="Click to copy"></span></dd>
@@ -414,6 +426,21 @@ function renderBot(b) {
   $(".bar.food > i", card).style.width = (fd / 20) * 100 + "%";
   $(".hp", card).textContent = b.online ? `${hp}/20` : "–";
   $(".fd", card).textContent = b.online ? `${fd}/20` : "–";
+
+  const now = $(".now", card);
+  now.hidden = !b.online || !b.doing;
+  if (b.online && b.doing) {
+    const d = b.doing;
+    const goals = d.goals || [];
+    const what = d.step || (b.ward ? `Guarding ${b.ward}` : goals.length ? `Working on ${goals[goals.length - 1]}` : "Idle");
+    now.className = "now" + (b.ward ? " guarding" : !d.step && !goals.length ? " idle" : "");
+    $(".what", now).textContent = what;
+    $(".for", now).textContent = duration(d.seconds);
+    $(".for", now).title = "How long it has been at this";
+    const goalsEl = $(".goals", now);
+    goalsEl.textContent = goals.length ? "for " + goals.join(" › ") : "";
+    goalsEl.hidden = !goals.length;
+  }
 
   const task = $(".task", card);
   if (b.task) {

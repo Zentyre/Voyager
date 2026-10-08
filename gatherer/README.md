@@ -75,6 +75,9 @@ Use item names as they appear in `/give`: `raw_iron`, `iron_ingot`,
 While the bots run, open **http://localhost:3000** in a browser on the same
 computer. You get a card per bot with:
 - health, food, position (click to copy), what it's holding and wearing, inventory;
+- **Now**: the step it's on ("Walking to the crafting table", "Crafting 4 oak
+  planks", "Fighting a zombie") and for how long, with what that step is for
+  underneath ("for 3 diamond › 1 iron pickaxe › 3 iron ingot");
 - the current task with a progress bar, and the queue;
 - a "Get item" box with item-name suggestions, and buttons for status,
   inventory, eat, sleep, home, deposit, armor and stop;

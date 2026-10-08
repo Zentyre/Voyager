@@ -53,6 +53,54 @@ function createContext(bot, config) {
 
     ctx.fmt = (pos) => `${Math.floor(pos.x)} ${Math.floor(pos.y)} ${Math.floor(pos.z)}`;
 
+    // What the bot is doing right now, for the dashboard: the goals it is
+    // working through ("3 diamond" > "iron pickaxe" > "3 iron ingot") and the
+    // step under way ("Walking to the furnace"). Each goal level keeps its own
+    // step, so finishing a sub-goal shows the parent's step again.
+    const levels = [{ goal: null, step: null, since: Date.now() }];
+    const top = () => levels[levels.length - 1];
+    ctx.within = async (goal, fn) => {
+        const level = { goal, step: null, since: Date.now() };
+        levels.push(level);
+        try {
+            return await fn();
+        } finally {
+            const i = levels.lastIndexOf(level);
+            if (i > 0) levels.splice(i, 1);
+        }
+    };
+    ctx.doing = (step) => {
+        const level = top();
+        if (level.step !== step) level.since = Date.now();
+        level.step = step;
+    };
+    // A step that interrupts another one (walking there, a fight, a snack),
+    // after which the earlier step shows again.
+    ctx.during = async (step, fn) => {
+        const level = top();
+        const before = { step: level.step, since: level.since };
+        ctx.doing(step);
+        try {
+            return await fn();
+        } finally {
+            if (level.step === step) Object.assign(level, before);
+        }
+    };
+    ctx.nowDoing = () => {
+        const step = [...levels].reverse().find((l) => l.step);
+        return {
+            step: step?.step || null,
+            goals: levels.map((l) => l.goal).filter(Boolean),
+            seconds: Math.round((Date.now() - (step?.since || top().since)) / 1000),
+        };
+    };
+    // Drop leftover steps once a job is over (or was stopped midway).
+    ctx.doneDoing = () => {
+        levels.length = 1;
+        Object.assign(levels[0], { step: null, since: Date.now() });
+    };
+    ctx.pretty = (name) => String(name).replace(/^minecraft:/, "").replace(/_/g, " ");
+
     // Includes worn armor and the off-hand, so equipping something
     // doesn't make it look like we lost it. While a furnace, chest or other
     // screen is open, mineflayer only copies its slots back into
@@ -115,8 +163,11 @@ function createContext(bot, config) {
         bot.clearControlStates();
     };
 
-    ctx.goTo = (pos, range = 1) =>
-        bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, range));
+    // `what` names the destination for the dashboard ("the crafting table").
+    ctx.goTo = (pos, range = 1, what = null) =>
+        ctx.during(`Walking to ${what || ctx.fmt(pos)}`, () =>
+            bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, range))
+        );
 
     ctx.withTimeout = (promise, ms) => {
         let timer;

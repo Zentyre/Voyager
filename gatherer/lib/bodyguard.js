@@ -62,6 +62,7 @@ function installBodyguard(ctx) {
                 if (!ward) {
                     // Out of sight (too far, other dimension, logged off).
                     bot.pathfinder.setGoal(null);
+                    ctx.doing(`Waiting for ${name} to come back into view`);
                     if (!lostSince) {
                         lostSince = Date.now();
                         ctx.say(`I can't see ${name}. Come back near me and I'll follow.`);
@@ -79,6 +80,7 @@ function installBodyguard(ctx) {
 
                 const threat = threatToWard(ward);
                 if (threat) {
+                    ctx.doing(`Protecting ${name}`);
                     const before = ctx.interrupts;
                     const won = await ctx.fight(threat, {
                         maxDistance: config.guardRadius + 12,
@@ -94,6 +96,7 @@ function installBodyguard(ctx) {
 
                 // Stay close.
                 const distance = ward.position.distanceTo(bot.entity.position);
+                ctx.doing(distance > config.followDistance + 1 ? `Following ${name}` : `Standing by ${name}`);
                 if (distance > config.followDistance + 1) {
                     bot.pathfinder.setGoal(new goals.GoalFollow(ward, config.followDistance), true);
                 } else if (distance < 1.5) {

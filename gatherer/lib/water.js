@@ -22,13 +22,15 @@ function installWater(ctx) {
         if (ctx.countItem("water_bucket") > 0) return;
         if (ctx.countItem("bucket") === 0) {
             ctx.say("Making a bucket.");
+            ctx.doing("Making a bucket");
             await ctx.obtain("bucket", 1, seen);
         }
         for (let attempt = 0; attempt <= config.maxExploreAttempts; attempt++) {
             ctx.checkStop();
             const source = findSource();
             if (source) {
-                await ctx.act(() => ctx.goTo(source.position, 3));
+                ctx.doing("Filling a bucket with water");
+                await ctx.act(() => ctx.goTo(source.position, 3, "the water"));
                 const bucket = bot.inventory.items().find((i) => i.name === "bucket");
                 await bot.equip(bucket, "hand");
                 await bot.lookAt(source.position.offset(0.5, 0.9, 0.5), true);
@@ -40,6 +42,7 @@ function installWater(ctx) {
                 }
                 continue;
             }
+            ctx.doing("Looking for water");
             await ctx.explore("block", ["water"]);
         }
         throw new Error("couldn't find water to fill a bucket");
@@ -49,6 +52,7 @@ function installWater(ctx) {
     async function placeWaterAt(pos) {
         const below = bot.blockAt(pos.offset(0, -1, 0));
         if (!below || below.boundingBox !== "block") throw new Error("nothing solid under that spot");
+        ctx.doing(`Placing water at ${ctx.fmt(pos)}`);
         await ctx.act(() => ctx.goTo(pos, 3));
         const block = bot.blockAt(pos);
         if (block && block.name !== "air" && block.name !== "water") await bot.dig(block);

@@ -39,6 +39,7 @@ function installBrewing(ctx) {
         const already = potionSlots();
         const before = ctx.countItem("potion");
         await ctx.obtain("glass_bottle", count, seen);
+        ctx.doing(`Filling ${count} water bottle${count === 1 ? "" : "s"}`);
         for (let attempt = 0; ctx.countItem("potion") - before < count && attempt < count * 2 + 4; attempt++) {
             ctx.checkStop();
             const source = ctx.findWaterSource();
@@ -46,7 +47,7 @@ function installBrewing(ctx) {
                 await ctx.explore("block", ["water"]);
                 continue;
             }
-            await ctx.act(() => ctx.goTo(source.position, 3));
+            await ctx.act(() => ctx.goTo(source.position, 3, "the water"));
             const bottle = bot.inventory.items().find((i) => i.name === "glass_bottle");
             if (!bottle) break;
             await bot.equip(bottle, "hand");
@@ -93,6 +94,7 @@ function installBrewing(ctx) {
         ctx.say(`Brewing ${count} ${modifier ? modifier + " " : ""}${potion}: ${ingredients.join(" → ")}.`);
 
         // Gather everything first so we fail early on Nether-only items.
+        ctx.doing("Gathering the ingredients");
         for (const ing of ingredients) await ctx.obtain(ing, batches, seen);
         await ctx.obtain("blaze_powder", fuelNeeded, seen);
         const stand = await ctx.ensureStation("brewing_stand", seen);
@@ -105,14 +107,16 @@ function installBrewing(ctx) {
                 const bottles = await fillBottles(size, seen);
                 if (bottles.length < size) throw new Error("couldn't fill water bottles");
 
-                await ctx.act(() => ctx.goTo(stand.position, 2));
+                await ctx.act(() => ctx.goTo(stand.position, 2, "the brewing stand"));
+                ctx.doing(`Brewing batch ${batch + 1}/${batches}`);
                 const window = await bot.openContainer(stand);
                 try {
                     if (!window.slots[SLOT_FUEL]) await putIn(window, "blaze_powder", SLOT_FUEL);
                     for (let slot = 0; slot < size; slot++) {
                         if (!window.slots[slot]) await moveFromInventory(window, bottles[slot], slot);
                     }
-                    for (const ing of ingredients) {
+                    for (const [i, ing] of ingredients.entries()) {
+                        ctx.doing(`Brewing batch ${batch + 1}/${batches}: adding ${ctx.pretty(ing)} (${i + 1}/${ingredients.length})`);
                         await putIn(window, ing, SLOT_INGREDIENT);
                         await waitForBrew(window);
                     }

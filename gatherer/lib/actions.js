@@ -24,27 +24,37 @@ function installActions(ctx) {
         if (plan.type === "none") throw new Error(`I don't know how to get ${name}`);
         const done = learn.begin(plan.type, name, missing);
         try {
-            switch (plan.type) {
-                case "mine":
-                    await mine(name, target, plan.blocks, next);
-                    break;
-                case "craft":
-                    await craft(name, target, plan, next);
-                    break;
-                case "smelt":
-                    await smelt(name, target, plan.input, next);
-                    break;
-                case "hunt":
-                    await hunt(name, target, plan.mobs, next);
-                    break;
-                case "farm":
-                    await ctx.farmFor(name, target, plan.crop, next);
-                    break;
-            }
+            await ctx.within(`${missing} ${ctx.pretty(name)}`, () => run(plan, name, target, next));
             done(true);
         } catch (err) {
-            done(err instanceof ctx.Stopped || err instanceof ctx.Retry ? null : false);
+            // Only the step that went wrong is marked as failing: planks didn't
+            // fail because the log under them couldn't be mined, and blaming
+            // them sent the bot looking for spruce it can't see past oak it can.
+            const blame = !(err instanceof ctx.Stopped || err instanceof ctx.Retry) && !err.blamed;
+            done(blame ? false : null);
+            if (blame) err.blamed = true;
             throw err;
+        }
+    }
+
+    // The plan's method, run inside obtain's goal level.
+    async function run(plan, name, target, next) {
+        switch (plan.type) {
+            case "mine":
+                await mine(name, target, plan.blocks, next);
+                break;
+            case "craft":
+                await craft(name, target, plan, next);
+                break;
+            case "smelt":
+                await smelt(name, target, plan.input, next);
+                break;
+            case "hunt":
+                await hunt(name, target, plan.mobs, next);
+                break;
+            case "farm":
+                await ctx.farmFor(name, target, plan.crop, next);
+                break;
         }
     }
 
@@ -66,6 +76,7 @@ function installActions(ctx) {
                 const tool = planner.toolFor(blocks, seen);
                 if (!tool) throw new Error(`no tool I can make will mine ${name}`);
                 ctx.say(`Getting a ${tool} to mine ${name}.`);
+                ctx.doing(`Getting a ${ctx.pretty(tool)} to mine ${ctx.pretty(name)}`);
                 await obtain(tool, 1, seen);
                 continue;
             }
@@ -97,6 +108,7 @@ function installActions(ctx) {
                     throw new Error(`couldn't find any ${name} nearby`);
                 }
                 ctx.log(`No ${name} source in range, exploring (${exploreAttempts}/${config.maxExploreAttempts}).`);
+                ctx.doing(`Looking for ${ctx.pretty(name)} (${exploreAttempts}/${config.maxExploreAttempts})`);
                 lastExplore = await exploreAndReplan(seen, "block", harvestable.map((b) => b.name));
                 continue;
             }
@@ -152,12 +164,16 @@ function installActions(ctx) {
     // a drop that lands on leaves or out of reach is left behind.
     async function harvest(block) {
         const far = block.position.distanceTo(bot.entity.position);
+        const what = `${ctx.pretty(block.name)} at ${ctx.fmt(block.position)}`;
+        ctx.doing(`Walking to the ${what}`);
         await ctx.withTimeout(bot.pathfinder.goto(new goals.GoalLookAtBlock(block.position, bot.world)), 20000 + far * 1500);
         const target = bot.blockAt(block.position);
         if (!target || target.type !== block.type) return; // already gone
         await bot.tool.equipForBlock(target, { requireHarvest: true });
         if (!target.canHarvest(bot.heldItem?.type ?? null)) throw new Error("no tool that can harvest it");
+        ctx.doing(`Mining the ${what}`);
         await digBlock(target);
+        ctx.doing(`Picking up what the ${ctx.pretty(block.name)} dropped`);
         await collectDropsAt(block.position);
     }
 
@@ -315,25 +331,31 @@ function installActions(ctx) {
         const needed = Math.min(20, Math.ceil(block.position.y - bot.entity.position.y));
         if (scaffoldCount() < needed) {
             ctx.log(`Can't reach the ${block.name} at ${ctx.fmt(block.position)}; getting dirt to build up to it.`);
+            ctx.doing(`Getting dirt to build up to the ${ctx.pretty(block.name)}`);
             await obtain("dirt", ctx.countItem("dirt") + needed - scaffoldCount(), seen);
         }
         // Stand under it, or as close as the ground allows.
         const p = block.position;
+        ctx.doing(`Walking under the ${ctx.pretty(block.name)} at ${ctx.fmt(p)}`);
         await ctx.withTimeout(bot.pathfinder.goto(new goals.GoalNearXZ(p.x, p.z, 1)), 30000);
         ctx.log(`Building up to the ${block.name} at ${ctx.fmt(p)}.`);
+        ctx.doing(`Building up to the ${ctx.pretty(block.name)} at ${ctx.fmt(p)}`);
         const pillar = [];
         try {
             await buildUp(block, reach, pillar);
             const target = bot.blockAt(p);
             if (target && target.type === block.type) {
                 await bot.tool.equipForBlock(target, { requireHarvest: true });
+                ctx.doing(`Mining the ${ctx.pretty(block.name)} from the top of a pillar`);
                 await digBlock(target);
             }
             await digInReach(block.type);
             await shakeDownDrops();
         } finally {
+            ctx.doing("Climbing back down");
             await climbDown(pillar).catch(() => {});
         }
+        ctx.doing(`Picking up what the ${ctx.pretty(block.name)} dropped`);
         await collectDropsAt(p);
     }
 
@@ -543,8 +565,8 @@ function installActions(ctx) {
         if (remembered.length) {
             const spot = remembered[0];
             ctx.log(`Heading to where I saw ${spot.name} before (${spot.x} ${spot.z}).`);
-            await ctx.safely(() =>
-                ctx.withTimeout(bot.pathfinder.goto(new goals.GoalNear(spot.x, spot.y, spot.z, 6)), 120000)
+            await ctx.during(`Heading to where I saw ${ctx.pretty(spot.name)} before (${spot.x} ${spot.z})`, () =>
+                ctx.safely(() => ctx.withTimeout(bot.pathfinder.goto(new goals.GoalNear(spot.x, spot.y, spot.z, 6)), 120000))
             );
             if (!sourcesInView(kind, names)) learn.forget(kind, names, new Vec3(spot.x, spot.y, spot.z));
             return null;
@@ -566,8 +588,9 @@ function installActions(ctx) {
         const arm = learn.choose(context, free.length ? free : safe.length ? safe : COMPASS);
         ctx.crew?.claim(`explore:${context}:${arm}`, 90000);
         const dest = target(arm);
-        await ctx.safely(() =>
-            ctx.withTimeout(bot.pathfinder.goto(new goals.GoalXZ(dest.x, dest.z)), 60000)
+        const looking = names.length ? ` for ${names.slice(0, 3).map(ctx.pretty).join(" / ")}` : "";
+        await ctx.during(`Exploring ${arm}${looking} (to ${dest.x} ${dest.z})`, () =>
+            ctx.safely(() => ctx.withTimeout(bot.pathfinder.goto(new goals.GoalXZ(dest.x, dest.z)), 60000))
         );
         return { context, arm };
     }
@@ -583,6 +606,7 @@ function installActions(ctx) {
         // loop until everything is in hand at once.
         for (let pass = 0; ; pass++) {
             ctx.checkStop();
+            ctx.doing(`Gathering what ${ctx.pretty(name)} is made from`);
             if (plan.recipe.requiresTable) await ensureStation("crafting_table", seen);
             for (const ing of plan.ingredients) {
                 await obtain(ing.name, ing.count * times, seen);
@@ -595,7 +619,7 @@ function installActions(ctx) {
         let table = null;
         if (plan.recipe.requiresTable) {
             table = await ensureStation("crafting_table", seen);
-            await ctx.act(() => ctx.goTo(table.position, 2));
+            await ctx.act(() => ctx.goTo(table.position, 2, "the crafting table"));
         }
         // The variant that was planned (cobblestone, not the cobbled deepslate
         // that happens to be in the bag for something else), if it's craftable.
@@ -607,6 +631,7 @@ function installActions(ctx) {
         };
         const recipe = usable.find(same) || usable[0];
         if (!recipe) throw new Error(`no usable recipe for ${name}`);
+        ctx.doing(`Crafting ${times * perCraft} ${ctx.pretty(name)}`);
         await bot.craft(recipe, times, table);
         ctx.log(`Crafted ${times * perCraft} ${name}.`);
     }
@@ -617,7 +642,7 @@ function installActions(ctx) {
         if (block) return block;
         if (seen.has(name)) throw new Error(`need a ${name} to make a ${name}`);
         await obtain(name, 1, seen);
-        block = await ctx.act(() => placeNearby(name));
+        block = await ctx.during(`Placing a ${ctx.pretty(name)}`, () => ctx.act(() => placeNearby(name)));
         ctx.placedStations.push(block.position);
         ctx.say(`Placed a ${name} at ${ctx.fmt(block.position)}.`);
         return block;
@@ -671,9 +696,11 @@ function installActions(ctx) {
         const amount = target - ctx.countItem(name);
         await obtain(input, amount, seen);
         const furnaceBlock = await ensureStation("furnace", seen);
+        ctx.doing(`Getting fuel to smelt ${ctx.pretty(input)}`);
         await ensureFuel(amount, input, seen);
         await obtain(input, amount, seen); // planks for fuel may have used up logs
-        await ctx.act(() => ctx.goTo(furnaceBlock.position, 2));
+        await ctx.act(() => ctx.goTo(furnaceBlock.position, 2, "the furnace"));
+        ctx.doing("Loading the furnace");
 
         let furnace = await bot.openFurnace(furnaceBlock);
         try {
@@ -697,10 +724,11 @@ function installActions(ctx) {
             let lastProgress = Date.now();
             while (ctx.countItem(name) < target) {
                 ctx.checkStop();
+                ctx.doing(`Smelting ${ctx.pretty(input)} into ${ctx.pretty(name)} (${ctx.countItem(name)}/${target})`);
                 if (ctx.threatNearby()) {
                     furnace.close();
                     await ctx.guard();
-                    await ctx.act(() => ctx.goTo(furnaceBlock.position, 2));
+                    await ctx.act(() => ctx.goTo(furnaceBlock.position, 2, "the furnace"));
                     furnace = await bot.openFurnace(furnaceBlock);
                 }
                 if (furnace.outputItem()) {
@@ -791,6 +819,7 @@ function installActions(ctx) {
                     throw new Error(`couldn't find any ${mobs.join("/")} nearby`);
                 }
                 ctx.log(`No ${mobs.join("/")} I can hunt in range, exploring (${exploreAttempts}/${config.maxExploreAttempts}).`);
+                ctx.doing(`Looking for ${mobs.map(ctx.pretty).join(" / ")} (${exploreAttempts}/${config.maxExploreAttempts})`);
                 lastExplore = await exploreAndReplan(seen, "mob", mobs);
                 continue;
             }
@@ -798,6 +827,7 @@ function installActions(ctx) {
             learn.remember("mob", mob.name, mob.position);
             ctx.crew?.claim(`mob:${mob.id}`, 45000);
             ctx.log(`Hunting ${mob.name} for ${name}.`);
+            ctx.doing(`Hunting a ${ctx.pretty(mob.name)} for ${ctx.pretty(name)}`);
             try {
                 await ctx.act(() => ctx.huntMob(mob));
             } catch (err) {
@@ -827,7 +857,8 @@ function installActions(ctx) {
             .sort((a, b) => a.position.distanceTo(pos) - b.position.distanceTo(pos));
         for (const drop of drops) {
             if (!drop.isValid || !bot.entities[drop.id]) continue;
-            await ctx.safely(() => walkOver(drop));
+            const item = drop.getDroppedItem?.()?.name;
+            await ctx.during(`Picking up ${item ? ctx.pretty(item) : "drops"}`, () => ctx.safely(() => walkOver(drop)));
         }
     }
 
@@ -844,8 +875,12 @@ function installActions(ctx) {
 
     // Put the items we were asked to gather into the configured chest.
     async function depositAll() {
+        return ctx.during("Emptying my bag into the chest", depositInChest);
+    }
+
+    async function depositInChest() {
         const chestPos = new Vec3(config.chest.x, config.chest.y, config.chest.z);
-        await ctx.act(() => ctx.goTo(chestPos, 2));
+        await ctx.act(() => ctx.goTo(chestPos, 2, "the chest"));
         const chestBlock = bot.blockAt(chestPos);
         if (!chestBlock || !chestBlock.name.includes("chest")) {
             ctx.say(`No chest at ${ctx.fmt(chestPos)}.`);

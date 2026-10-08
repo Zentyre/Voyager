@@ -67,7 +67,9 @@ function installSurvival(ctx) {
                 const choice = planner.cheapestOf(kb.FOOD_SOURCES);
                 if (choice && choice.cost < Infinity) {
                     ctx.say(`Hungry, going to get some ${choice.name}.`);
-                    await ctx.obtain(choice.name, ctx.countItem(choice.name) + 3);
+                    await ctx.during(`Hungry: getting ${ctx.pretty(choice.name)}`, () =>
+                        ctx.obtain(choice.name, ctx.countItem(choice.name) + 3)
+                    );
                 }
             } catch (err) {
                 if (err instanceof ctx.Stopped || err instanceof ctx.Retry) throw err;
@@ -79,8 +81,10 @@ function installSurvival(ctx) {
         }
         if (!food) return;
         try {
-            await bot.equip(food, "hand");
-            await bot.consume();
+            await ctx.during(`Eating ${ctx.pretty(food.name)}`, async () => {
+                await bot.equip(food, "hand");
+                await bot.consume();
+            });
             ctx.log(`Ate ${food.name}.`);
         } catch (err) {
             ctx.log(`Couldn't eat: ${err.message}`);
@@ -139,18 +143,18 @@ function installSurvival(ctx) {
                 await ctx.obtain(choice.name, 1);
                 have = bot.inventory.items().find((i) => i.name.endsWith("_bed"));
             }
-            bed = await ctx.act(() => ctx.placeNearby(have.name));
+            bed = await ctx.during("Placing a bed", () => ctx.act(() => ctx.placeNearby(have.name)));
             learn.remember("block", bed.name, bed.position);
         }
         if (!bed) throw new Error("no bed nearby");
 
         sleeping = true;
         try {
-            await ctx.act(() => ctx.goTo(bed.position, 2));
+            await ctx.act(() => ctx.goTo(bed.position, 2, "the bed"));
             await bot.sleep(bed);
             ctx.say("Sleeping.");
             learn.remember("block", bed.name, bed.position);
-            await new Promise((resolve) => {
+            await ctx.during("Sleeping", () => new Promise((resolve) => {
                 const done = () => {
                     clearTimeout(timer);
                     bot.removeListener("wake", done);
@@ -158,7 +162,7 @@ function installSurvival(ctx) {
                 };
                 const timer = setTimeout(done, 120000);
                 bot.once("wake", done);
-            });
+            }));
             learn.count("nightsSlept");
             return true;
         } finally {

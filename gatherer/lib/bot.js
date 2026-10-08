@@ -253,13 +253,14 @@ function createBot(config, crew, reporter) {
                 }
             }
             if (config.chest) await ctx.safely(ctx.depositAll);
-            if (config.returnHome && ctx.home) await ctx.safely(() => ctx.goTo(ctx.home, 2));
+            if (config.returnHome && ctx.home) await ctx.safely(() => ctx.goTo(ctx.home, 2, "home"));
             ctx.tell(replyTo, "All tasks done.");
             if (config.quitWhenDone) bot.quit();
         } catch (err) {
             if (!(err instanceof ctx.Stopped)) log(err.message);
         } finally {
             ctx.replyTo = null;
+            ctx.doneDoing();
             setBusy(false);
             ctx.stopRequested = false;
         }
@@ -308,6 +309,7 @@ function createBot(config, crew, reporter) {
             time: bot.time?.timeOfDay,
             busy: Boolean(ctx.busy),
             ward: ctx.ward || null,
+            doing: e ? ctx.nowDoing() : null,
             task: t ? { item: t.item, count: t.count, done: Math.max(0, Math.min(progress(t), t.count)) } : null,
             queue: ctx.queue.map((q) => ({ item: q.item, count: q.count })),
             held: bot.heldItem?.name || null,
@@ -332,21 +334,24 @@ function createBot(config, crew, reporter) {
         if (ctx.ward) return `Guarding ${ctx.ward}. ${vitals} Arrows: ${ctx.arrowCount()}.`;
         if (!ctx.current) return `Idle. ${ctx.queue.length} task(s) queued. ${vitals}`;
         const t = ctx.current;
-        return `Getting ${t.item}: ${Math.min(progress(t), t.count)}/${t.count}. ${ctx.queue.length} more queued. ${vitals}`;
+        const step = ctx.nowDoing().step;
+        return `Getting ${t.item}: ${Math.min(progress(t), t.count)}/${t.count}${step ? ` (${step[0].toLowerCase()}${step.slice(1)})` : ""}. ${ctx.queue.length} more queued. ${vitals}`;
     }
 
     // For one-off jobs outside the queue (farming, walking somewhere).
     // `replyTo`: a player who asked by /msg; everything said meanwhile goes to them.
-    async function runActivity(label, fn, replyTo = null) {
+    // `goal`: what the dashboard shows it working on ("Planting 9 carrot").
+    async function runActivity(label, fn, replyTo = null, goal = null) {
         if (ctx.busy) return ctx.tell(replyTo, `I'm busy. Say ${config.commandPrefix}stop first.`);
         setBusy(true);
         ctx.replyTo = replyTo;
         try {
-            await fn();
+            await ctx.within(goal || label[0].toUpperCase() + label.slice(1), fn);
         } catch (err) {
             if (!(err instanceof ctx.Stopped)) say(`Couldn't ${label}: ${err.message}`);
         } finally {
             ctx.replyTo = null;
+            ctx.doneDoing();
             setBusy(false);
             ctx.stopRequested = false;
         }
@@ -354,7 +359,8 @@ function createBot(config, crew, reporter) {
 
     // Walk to a player and drop items for them.
     async function give(player, what, count) {
-        await ctx.goTo(player.position, 2);
+        await ctx.goTo(player.position, 2, player.username);
+        ctx.doing(`Handing ${what === "all" ? "items" : ctx.pretty(what)} to ${player.username}`);
         await bot.lookAt(player.position.offset(0, 1.6, 0), true);
         const items = bot.inventory
             .items()
@@ -391,7 +397,7 @@ function createBot(config, crew, reporter) {
         // Asked in public chat: answer in public, even while a private job runs.
         const say = privately ? (message) => ctx.tell(fromPlayer, message) : fromPlayer ? ctx.sayPublic : ctx.say;
         // Activities started by /msg report by /msg the whole time they run.
-        const runExclusive = (label, fn) => runActivity(label, fn, privately ? fromPlayer : null);
+        const runExclusive = (label, fn, goal = null) => runActivity(label, fn, privately ? fromPlayer : null, goal);
         // come/give/guard act on whoever asked; from the dashboard or terminal, the owner.
         const requester = fromPlayer || config.owner || null;
         const cantSee = () => (fromPlayer ? "I can't see you." : `I can't see ${requester || "the owner"}.`);
@@ -425,7 +431,7 @@ function createBot(config, crew, reporter) {
                 await runExclusive("farm", async () => {
                     const n = await ctx.harvestCrops();
                     say(n ? `Harvested and replanted ${n} crops.` : "No ripe crops nearby.");
-                });
+                }, "Farming");
                 break;
             case "plant": {
                 const name = args[0];
@@ -434,7 +440,7 @@ function createBot(config, crew, reporter) {
                 );
                 if (!crop) return say(`Usage: ${config.commandPrefix}plant <wheat|carrot|potato|beetroot> [plots]`);
                 const plots = parseInt(args[1] || String(config.farmSize), 10);
-                await runExclusive("plant", () => ctx.plantCrop(crop, plots));
+                await runExclusive("plant", () => ctx.plantCrop(crop, plots), `Planting ${plots} ${ctx.pretty(crop.block)}`);
                 break;
             }
             case "breed": {
@@ -443,7 +449,7 @@ function createBot(config, crew, reporter) {
                     return say(`Usage: ${config.commandPrefix}breed <${Object.keys(ctx.kb.BREED_FOOD).join("|")}> [pairs]`);
                 }
                 const pairs = parseInt(args[1] || "1", 10);
-                await runExclusive("breed", () => ctx.breed(animal, pairs));
+                await runExclusive("breed", () => ctx.breed(animal, pairs), `Breeding ${pairs} pair${pairs === 1 ? "" : "s"} of ${ctx.pretty(animal)}s`);
                 break;
             }
             case "brew": {
@@ -452,23 +458,23 @@ function createBot(config, crew, reporter) {
                     return say(`Usage: ${config.commandPrefix}brew <potion> [count] [long|strong|splash]. Potions: ${ctx.potionNames().join(", ")}`);
                 }
                 const count = parseInt(args[1] || "3", 10);
-                await runExclusive("brew", () => ctx.brew(potion, count, args[2] || null));
+                await runExclusive("brew", () => ctx.brew(potion, count, args[2] || null), `Brewing ${count} ${args[2] ? args[2] + " " : ""}${ctx.pretty(potion)}`);
                 break;
             }
             case "sleep":
-                await runExclusive("sleep", () => ctx.sleep({ getBed: true }));
+                await runExclusive("sleep", () => ctx.sleep({ getBed: true }), "Going to sleep");
                 break;
             case "water":
                 await runExclusive("place water", async () => {
                     const pos = await ctx.placeWaterHere();
                     say(`Placed water at ${ctx.fmt(pos)}.`);
-                });
+                }, "Placing water");
                 break;
             case "bucket":
                 await runExclusive("fill a bucket", async () => {
                     await ctx.getWaterBucket();
                     say("Got a water bucket.");
-                });
+                }, "Filling a bucket");
                 break;
             case "learned":
             case "memory": {
@@ -489,7 +495,7 @@ function createBot(config, crew, reporter) {
                 if (!typed) return say(`Usage: ${config.commandPrefix}guard <player>`);
                 const name = Object.keys(bot.players).find((n) => n.toLowerCase() === typed.toLowerCase()) || typed;
                 if (name === bot.username) return say("I can't guard myself.");
-                await runExclusive("guard", () => ctx.bodyguard(name));
+                await runExclusive("guard", () => ctx.bodyguard(name), `Guarding ${name}`);
                 break;
             }
             case "bow": {
@@ -533,7 +539,7 @@ function createBot(config, crew, reporter) {
                     const given = await give(player, what, count);
                     const list = Object.entries(given).map(([n, c]) => `${c} ${n}`).join(", ");
                     say(list ? `Here you go: ${list}.` : "Nothing to give.");
-                });
+                }, `Giving ${what === "all" ? "items" : ctx.pretty(what)} to ${requester}`);
                 break;
             }
             case "stop":
@@ -563,7 +569,7 @@ function createBot(config, crew, reporter) {
             case "come": {
                 const player = requester && bot.players[requester]?.entity;
                 if (!player) return broadcast ? undefined : say(cantSee());
-                await runExclusive("come", () => ctx.goTo(player.position, 2));
+                await runExclusive("come", () => ctx.goTo(player.position, 2, requester), `Coming to ${requester}`);
                 break;
             }
             case "deposit":
@@ -571,7 +577,7 @@ function createBot(config, crew, reporter) {
                 await ctx.safely(ctx.depositAll);
                 break;
             case "home":
-                if (ctx.home) await ctx.safely(() => ctx.goTo(ctx.home, 2));
+                if (ctx.home) await ctx.safely(() => ctx.goTo(ctx.home, 2, "home"));
                 break;
             case "quit":
                 bot.quit();

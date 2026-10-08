@@ -43,7 +43,8 @@ function installFarming(ctx) {
                 ctx.crew?.claim(`crop:${block.position}`, 30000);
                 ctx.checkStop();
                 await ctx.guard();
-                await ctx.act(() => ctx.goTo(block.position, 2));
+                ctx.doing(`Harvesting ${ctx.pretty(crop.block)} at ${ctx.fmt(block.position)}`);
+                await ctx.act(() => ctx.goTo(block.position, 2, `the ripe ${ctx.pretty(crop.block)}`));
                 const current = bot.blockAt(block.position);
                 if (current?.type !== block.type || !kb.isMatureCrop(current)) continue;
                 try {
@@ -68,6 +69,7 @@ function installFarming(ctx) {
         const seed = bot.inventory.items().find((i) => i.name === crop.seed);
         if (!seed) return false;
         try {
+            ctx.doing(`Planting ${ctx.pretty(crop.seed)} at ${ctx.fmt(pos)}`);
             await ctx.act(() => ctx.goTo(pos, 2));
             await bot.equip(seed, "hand");
             await bot.placeBlock(soil, UP);
@@ -116,14 +118,17 @@ function installFarming(ctx) {
             const hoe = planner.cheapestOf(kb.HOES);
             if (!hoe || hoe.cost === Infinity) throw new Error("can't make a hoe");
             ctx.say(`Making a ${hoe.name} for farming.`);
+            ctx.doing(`Making a ${ctx.pretty(hoe.name)}`);
             await ctx.obtain(hoe.name, 1, seen);
         }
         if (ctx.countItem(crop.seed) === 0) {
+            ctx.doing(`Getting ${ctx.pretty(crop.seed)} to plant`);
             await ctx.obtain(crop.seed, Math.min(count, 4), seen);
         }
         let spots = farmSpots(count);
         if (spots.length === 0) {
             if (config.placeWater === false) throw new Error("no water nearby to start a farm next to");
+            ctx.doing("Making a water source for the farm");
             await ctx.makeWaterSource(seen);
             spots = farmSpots(count);
             if (spots.length === 0) throw new Error("no room for a farm around the water");
@@ -134,6 +139,7 @@ function installFarming(ctx) {
             if (ctx.countItem(crop.seed) === 0) break;
             ctx.checkStop();
             await ctx.guard();
+            ctx.doing(`Tilling the soil at ${ctx.fmt(pos)} (${planted}/${spots.length} planted)`);
             await ctx.act(() => ctx.goTo(pos, 2));
             let soil = bot.blockAt(pos);
             if (TILLABLE.has(soil?.name)) {
@@ -158,6 +164,7 @@ function installFarming(ctx) {
         for (const block of growing) {
             const meal = bot.inventory.items().find((i) => i.name === "bone_meal");
             if (!meal) return;
+            ctx.doing(`Using bone meal on the ${ctx.pretty(crop.block)}`);
             await ctx.act(() => ctx.goTo(block.position, 2));
             await bot.equip(meal, "hand");
             await bot.activateBlock(block).catch(() => {});
@@ -201,6 +208,7 @@ function installFarming(ctx) {
             if (nearest.distanceTo(bot.entity.position) > 16) {
                 await ctx.act(() => ctx.goTo(nearest, 3));
             }
+            ctx.doing(`Waiting for ${growing.length} ${ctx.pretty(crop.block)} to grow`);
             if (Date.now() - lastNote > 60000) {
                 ctx.say(`Waiting for ${growing.length} ${crop.block} to grow.`);
                 lastNote = Date.now();

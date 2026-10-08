@@ -44,7 +44,7 @@ function installAnimals(ctx) {
     async function feed(entity, foodName) {
         const food = bot.inventory.items().find((i) => i.name === foodName);
         if (!food) return false;
-        await ctx.act(() => ctx.withTimeout(ctx.goTo(entity.position, 2), 15000));
+        await ctx.act(() => ctx.withTimeout(ctx.goTo(entity.position, 2, `the ${ctx.pretty(entity.name)}`), 15000));
         if (!entity.isValid) return false;
         await bot.equip(food, "hand");
         await bot.lookAt(entity.position.offset(0, (entity.height || 1) * 0.5, 0), true);
@@ -63,6 +63,7 @@ function installAnimals(ctx) {
             const choice = planner.cheapestOf(foods);
             if (!choice || choice.cost === Infinity) throw new Error(`can't get ${foods.join(" or ")} to feed ${animal}`);
             food = choice.name;
+            ctx.doing(`Getting ${ctx.pretty(food)} to feed the ${ctx.pretty(animal)}s`);
             await ctx.obtain(food, needed, seen);
         }
 
@@ -76,6 +77,7 @@ function installAnimals(ctx) {
                 const ready = adults(animal).filter((e) => Date.now() - (fedAt.get(e.id) || 0) > LOVE_COOLDOWN_MS);
                 if (ready.length < 2) {
                     if (++searches > config.maxExploreAttempts) throw new Error(`couldn't find two adult ${animal}`);
+                    ctx.doing(`Looking for two adult ${ctx.pretty(animal)}s`);
                     await ctx.explore("mob", [animal]);
                     continue;
                 }
@@ -85,6 +87,7 @@ function installAnimals(ctx) {
                     .filter((e) => e !== first)
                     .sort((a, b) => a.position.distanceTo(first.position) - b.position.distanceTo(first.position))[0];
                 const babiesBefore = babies(animal);
+                ctx.doing(`Feeding two ${ctx.pretty(animal)}s ${ctx.pretty(food)} (${bred}/${pairs} pairs)`);
                 if (!(await feed(first, food)) || !(await feed(second, food))) continue;
                 await ctx.wait(4000);
                 if (babies(animal) > babiesBefore) learn.count("bred");

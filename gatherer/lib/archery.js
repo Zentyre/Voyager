@@ -233,7 +233,7 @@ function installArchery(ctx) {
             .slice(0, 8);
         for (const arrow of arrows) {
             if (!arrow.isValid) continue;
-            await ctx.withTimeout(ctx.goTo(arrow.position, 1), 6000).catch(() => {});
+            await ctx.withTimeout(ctx.goTo(arrow.position, 1, "an arrow I shot"), 6000).catch(() => {});
         }
     }
 
