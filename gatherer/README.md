@@ -240,6 +240,7 @@ coordinate. Each keeps its own memory file (`memory/<username>.json`) either way
 | Ability    | How                                                                                       |
 |------------|-------------------------------------------------------------------------------------------|
 | **Mine**   | Finds the nearest natural block that drops the item, digs to it, and picks up the drop. Goes back to places it remembers, or explores. Prefers blocks near its own height. For one out of reach overhead (a treetop), it gets dirt, builds a pillar up, takes what's in reach, knocks drops off the leaves, and digs the pillar back down. Gives up on any block after a time limit and moves on. |
+| **Run**    | Sprint-jumps on straight, flat stretches when it travels, as players do: about 7 blocks a second instead of 5.6 (a 69-block run took 10.0 s instead of 12.3). Only where it's safe: level ground, nothing to dig or place, room above its head, not on ice or slime, lined up with its path. `"sprintJump": false` turns it off (it uses a little more food). |
 | **Climb**  | Out of holes and up cliffs, it does whichever is quicker: dig a staircase, put blocks under itself (dirt or cobblestone), or walk round. Underground, heading back up to the surface, it tunnels straight up with a block under itself at each step instead of a staircase (one block dug a step, not three); it leaves that to the pathfinder next to water, lava or gravel. Towering works the way a player does it: it lands on the block it put down without waiting for the server's answer, so lag doesn't make it fall back into the spot. If the server keeps refusing tower blocks, after three it climbs other ways for a minute. |
 | **Craft**  | Uses the game's recipe list. Gathers ingredients recursively and places a crafting table if none is nearby. |
 | **Plans ahead** | When it goes out to mine, hunt, farm or smelt something, it also gets what the tasks still in the queue will need of it, as far as its bag has room: `!armor diamond` mines all 24 diamonds in one trip, then crafts the four pieces. |
@@ -447,6 +448,7 @@ with its progress and what's still to place (what it has and what's in chests).
 | `hunt`               | `true`        | Allow hunting mobs for drops and food                             |
 | `defend`             | `true`        | Fight back against hostile mobs                                   |
 | `defendRadius`       | `8`           | How close a hostile mob must be before it reacts                  |
+| `sprintJump`         | `true`        | Jump while sprinting on straight, flat stretches (faster; uses a little more food) |
 | `attackReach`        | `5`           | Melee reach, eyes to the mob's hitbox (2 to 5.5). A player gets 3; vanilla servers accept up to 6. Lower it if an anti-cheat plugin complains |
 | `fleeHealth`         | `6`           | Back off and eat at or below this health (of 20)                  |
 | `useShield`          | `true`        | Block with a shield while closing in on archers                   |
@@ -539,6 +541,7 @@ with its progress and what's still to place (what it has and what's in chests).
 | `lib/building.js`   | Builder: materials from chests, placing with the right facing, towers |
 | `lib/swimming.js`   | Water: air, swimming up, diving, getting out                |
 | `lib/climbing.js`   | Getting up: towers, tunnelling straight up                |
+| `lib/sprinting.js`  | Sprint-jumping on straight runs                           |
 | `lib/spin.js`       | Spinning round a player, spaced out with the rest of the crew |
 | `lib/chests.js`     | The unload chest set in game (`setchest`)                 |
 | `lib/accounts.js`   | Saved Microsoft logins: written safely, refreshed patiently |

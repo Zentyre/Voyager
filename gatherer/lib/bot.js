@@ -26,6 +26,7 @@ const { installBuilding } = require("./building");
 const { installSwimming } = require("./swimming");
 const { installClimbing } = require("./climbing");
 const { installSpin } = require("./spin");
+const { installSprintJump } = require("./sprinting");
 const { createProfiles } = require("./profiles");
 const { loginStorage } = require("./accounts");
 const { savedChest, saveChest } = require("./chests");
@@ -197,6 +198,7 @@ function createBot(config, crew, reporter) {
         };
         installClimbing(ctx, movements);
         bot.pathfinder.setMovements(movements);
+        installSprintJump(ctx); // after the pathfinder's own tick handler, so it gets the last word on jump
         bot.pathfinder.thinkTimeout = 10000;
         bot.pathfinder.tickTimeout = 30;
         bot.collectBlock.movements = movements;
