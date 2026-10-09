@@ -19,7 +19,7 @@ const { addresses } = require("./commands");
 const SPLIT = new Set(["get", "gather", "craft", "smelt"]); // divide the count
 const EVERYONE = new Set([
     "come", "stop", "quit", "status", "queue", "inv", "home", "guard", "bodyguard", "protect",
-    "eat", "sleep", "deposit", "give", "drop", "armor", "bow", "forget",
+    "eat", "sleep", "deposit", "give", "drop", "armor", "bow", "forget", "spin",
 ]);
 // Everything else (plan, farm, plant, breed, brew, water, bucket, learned,
 // help) goes to one bot: an idle one if possible.
@@ -410,6 +410,11 @@ function createCrewClient(port, { config, names }) {
             const until = Date.now() + ms;
             claims.set(key, { owner: me, until });
             port.postMessage({ type: "claim", key, owner: me, until });
+        },
+        // Who holds a claim starting with `prefix` (themselves included).
+        holders(prefix) {
+            const now = Date.now();
+            return [...claims].filter(([k, c]) => k.startsWith(prefix) && c.until > now).map(([, c]) => c.owner);
         },
         claimedByOther(key) {
             const c = claims.get(key);

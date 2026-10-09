@@ -25,6 +25,7 @@ const { installBodyguard } = require("./bodyguard");
 const { installBuilding } = require("./building");
 const { installSwimming } = require("./swimming");
 const { installClimbing } = require("./climbing");
+const { installSpin } = require("./spin");
 const { createProfiles } = require("./profiles");
 const { loginStorage } = require("./accounts");
 const { patchBot } = require("./compat");
@@ -151,6 +152,7 @@ function createBot(config, crew, reporter) {
         installArchery(ctx);
         installBodyguard(ctx);
         installBuilding(ctx);
+        installSpin(ctx);
         ctx.profiles = createProfiles(ctx);
         if (ctx.profiles.name !== "default") log(`Profile: ${ctx.profiles.name}.`);
 
@@ -453,7 +455,6 @@ function createBot(config, crew, reporter) {
         }
     }
 
-    // Walk to a player and drop items for them.
     // Hand things over: walk to the player and throw them. "all" is
     // everything it has: bag, hotbar, the armor it's wearing and the
     // off-hand too. A named item comes from the bag first, then off its body.
@@ -569,7 +570,7 @@ function createBot(config, crew, reporter) {
     const HELP = "Commands: " + [
         "get <item> [count]", "plan <item>", "farm", "plant <crop> [plots]", "breed <animal> [pairs]",
         "brew <potion> [count] [long|strong|splash]", "sleep", "water", "bucket", "armor [material]",
-        "guard [player]", "bow [arrows]", "give [item|all] [count]",
+        "guard [player]", "spin [player] [radius]", "bow [arrows]", "give [item|all] [count]",
         "learned", "forget", "stop", "status", "queue", "inv", "eat", "come", "deposit", "home", "say <text>", "quit",
         "profile [name]", "build <schematic> [x y z] [rotate 90|180|270] [clear]", "build list|materials|resume",
     ]
@@ -684,6 +685,22 @@ function createBot(config, crew, reporter) {
                 const name = Object.keys(bot.players).find((n) => n.toLowerCase() === typed.toLowerCase()) || typed;
                 if (name === bot.username) return say("I can't guard myself.");
                 await runExclusive("guard", () => ctx.bodyguard(name), `Guarding ${name}`);
+                break;
+            }
+            case "spin": {
+                // spin [player] [radius] | spin stop
+                if ((args[0] || "").toLowerCase() === "stop") {
+                    if (ctx.busy) ctx.stopRequested = true;
+                    ctx.stopCurrentAction();
+                    break;
+                }
+                const words = args.filter((a) => !/^\d+(\.\d+)?$/.test(a));
+                const radius = Math.min(16, Math.max(2, parseFloat(args.find((a) => /^\d+(\.\d+)?$/.test(a)) || "3")));
+                const typed = (words[0] || requester || "").replace(/[^A-Za-z0-9_]/g, "");
+                if (!typed) return say(`Usage: ${config.commandPrefix}spin [player] [radius]`);
+                const name = Object.keys(bot.players).find((n) => n.toLowerCase() === typed.toLowerCase()) || typed;
+                if (name === bot.username) return say("I can't spin round myself.");
+                await runExclusive("spin", () => ctx.spin(name, radius), `Spinning round ${name}`);
                 break;
             }
             case "bow": {

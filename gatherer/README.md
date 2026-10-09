@@ -212,7 +212,7 @@ listens:
 | Command | What the crew does |
 |---------|--------------------|
 | `!get <item> <count>` (also gather/craft/smelt) | Splits the count between the bots that are free (all bots if none are free). `!get oak_log 64` with two idle bots → 32 each. |
-| `!come`, `!stop`, `!quit`, `!status`, `!inv`, `!home`, `!guard`, `!eat`, `!sleep`, `!deposit`, `!give`, `!armor`, `!bow`, `!forget` | Every bot does it: e.g. `!guard` gives you a squad of bodyguards, `!give oak_log` has each bot bring you its logs. Bots with nothing to add stay quiet. |
+| `!come`, `!stop`, `!quit`, `!status`, `!inv`, `!home`, `!guard`, `!spin`, `!eat`, `!sleep`, `!deposit`, `!give`, `!armor`, `!bow`, `!forget` | Every bot does it: e.g. `!guard` gives you a squad of bodyguards, `!give oak_log` has each bot bring you its logs. Bots with nothing to add stay quiet. |
 | `!plan`, `!farm`, `!plant`, `!breed`, `!brew`, `!water`, `!bucket`, `!learned`, `!help` | One bot does it: a free one if there is one. |
 | `!crew` | Lists the bots and whether each is idle, busy or offline. |
 | `!all <command>` | Sends any command to every bot. |
@@ -343,6 +343,7 @@ e.g. `I died at -390 70 1310 in the overworld (Zyntharic was slain by Zombie).`
 | `!bow [arrows]`                  | Get a bow and arrows (16 by default) to use in fights |
 | `!armor`                         | Put on the best armor it has and say what it's wearing |
 | `!armor <material>`              | Get and wear a full set: `leather`, `golden`, `iron` or `diamond` |
+| `!spin [player] [radius]`        | Walk round and round a player (you, if no name), 3 blocks out unless you give a radius. Several bots spinning round the same player spread out evenly on one circle and go round together, so they never bump into each other; one joining or leaving makes the rest spread out again. `!spin stop` or `!stop` ends it. Said to the crew, every bot joins in |
 | `!learned`                       | What it has learned so far                    |
 | `!forget`                        | Erase everything it learned on this server   |
 | `!stop`                          | Stop now (and wake up), clear the queue       |
@@ -531,4 +532,5 @@ with its progress and what's still to place (what it has and what's in chests).
 | `lib/building.js`   | Builder: materials from chests, placing with the right facing, towers |
 | `lib/swimming.js`   | Water: air, swimming up, diving, getting out                |
 | `lib/climbing.js`   | Getting up: towers, tunnelling straight up                |
+| `lib/spin.js`       | Spinning round a player, spaced out with the rest of the crew |
 | `lib/accounts.js`   | Saved Microsoft logins: written safely, refreshed patiently |

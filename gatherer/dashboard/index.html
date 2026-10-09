@@ -362,6 +362,7 @@ const OPTIONS = [
   ["Brew", "brew {potion} {count} {mod}", sel("potion", POTIONS, "Potion") + `<input name="count" type="number" min="1" value="3" aria-label="How many">` + sel("mod", ["", "long", "strong", "splash", "lingering"], "Modifier")],
   ["Armor set", "armor {material}", sel("material", ["leather", "golden", "iron", "diamond"], "Material")],
   ["Guard", "guard {player}", `<input name="player" placeholder="player (empty = you)" aria-label="Player">`],
+  ["Spin", "spin {player} {radius}", `<input name="player" placeholder="player (empty = you)" aria-label="Player">` + `<input name="radius" type="number" min="2" max="16" value="3" aria-label="Radius">`],
   ["Bow", "bow {arrows}", `<input name="arrows" type="number" min="1" value="16" aria-label="Arrows">`],
   ["Give me", "give {item} {count}", `<input name="item" list="items" placeholder="item, or all" aria-label="Item">` + `<input name="count" type="number" min="1" placeholder="all" aria-label="How many">`],
   ["Say", "say {text}", `<input name="text" placeholder="message for chat" aria-label="Message">`],
