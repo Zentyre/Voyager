@@ -69,17 +69,22 @@ function installWater(ctx) {
     }
 
     // Find a flat patch of dirt/grass and put a water source in the middle,
-    // leaving room for up to 8 farm plots around it.
+    // leaving room for up to 8 farm plots around it. Somewhere with light for
+    // crops (daylight, or torches): nearest first, a little further than
+    // before if need be (from a cave, the surface is above).
     async function makeWaterSource(seen = new Set(), near = bot.entity.position) {
         await getWaterBucket(seen);
         const tillable = new Set(["dirt", "grass_block", "coarse_dirt", "rooted_dirt"]);
+        const lit = ctx.litForCrops || (() => true);
         const candidates = bot
             .findBlocks({
                 matching: [...tillable].map((n) => bot.registry.blocksByName[n].id),
-                maxDistance: 16,
-                count: 200,
+                maxDistance: 48,
+                count: 400,
                 point: near,
             })
+            .filter((pos) => lit(pos))
+            .sort((a, b) => a.distanceTo(near) - b.distanceTo(near))
             .filter((pos) => {
                 let ok = 0;
                 for (let dx = -1; dx <= 1; dx++) {
@@ -90,7 +95,7 @@ function installWater(ctx) {
                 }
                 return ok >= 7;
             });
-        if (candidates.length === 0) throw new Error("no flat dirt nearby for a farm");
+        if (candidates.length === 0) throw new Error("no flat dirt with daylight or torchlight nearby for a farm");
         ctx.say("Placing water for a farm.");
         return placeWaterAt(candidates[0]);
     }

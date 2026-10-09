@@ -82,6 +82,15 @@ function installFarming(ctx) {
         }
     }
 
+    // Enough light for a crop in the space above `soil`: daylight (sky light
+    // 9+, so it grows by day) or a torch or lamp (block light 9+). Seeds
+    // can't even be planted in the dark, so water in a cave is no use.
+    function lit(soil) {
+        const above = bot.blockAt(soil.offset(0, 1, 0));
+        return Boolean(above) && Math.max(above.skyLight ?? 0, above.light ?? 0) >= 9;
+    }
+    ctx.litForCrops = lit;
+
     // Room to till: a hoe only works with nothing on top, but grass and
     // flowers on top just need knocking off first.
     function clearAbove(pos) {
@@ -92,19 +101,25 @@ function installFarming(ctx) {
     // Empty farmland first; then soil level with water within 4 blocks (it
     // stays wet); then soil one block above that water, the usual pond bank:
     // crops grow there too, only slower. It used to take only the first two,
-    // so beside an ordinary pond there was "no room for a farm".
+    // so beside an ordinary pond there was "no room for a farm". Only spots
+    // with light enough for crops (not a pool in a cave).
     function farmSpots(count) {
         const spots = bot
             .findBlocks({ matching: blockId("farmland"), maxDistance: config.searchRadius, count: 128 })
-            .filter((pos) => bot.blockAt(pos.offset(0, 1, 0))?.name === "air")
+            .filter((pos) => bot.blockAt(pos.offset(0, 1, 0))?.name === "air" && lit(pos))
             .sort(byDistance);
         const seen = new Set(spots.map(String));
         // The water's surface: plenty of blocks, since most water is under it.
-        const waters = bot
+        // Water out in the light first (a pool in a cave, nearer, would crowd
+        // it out); every spot is checked for light anyway.
+        const surface = bot
             .findBlocks({ matching: blockId("water"), maxDistance: config.searchRadius, count: 1024 })
             .filter((pos) => bot.blockAt(pos.offset(0, 1, 0))?.name !== "water")
-            .sort(byDistance)
-            .slice(0, 48);
+            .sort(byDistance);
+        const waters = [...surface.filter(lit), ...surface.filter((pos) => !lit(pos))].slice(0, 48);
+        if (surface[0] && !lit(surface[0])) {
+            ctx.log(`The nearest water, at ${ctx.fmt(surface[0])}, is too dark for crops; looking for a spot with daylight or torchlight.`);
+        }
         const wet = [];
         const dry = [];
         for (const water of waters) {
@@ -114,7 +129,7 @@ function installFarming(ctx) {
                         const pos = water.offset(dx, dy, dz);
                         if (seen.has(String(pos))) continue;
                         const block = bot.blockAt(pos);
-                        if (block && TILLABLE.has(block.name) && clearAbove(pos)) {
+                        if (block && TILLABLE.has(block.name) && clearAbove(pos) && lit(pos)) {
                             seen.add(String(pos));
                             list.push(pos);
                         }
