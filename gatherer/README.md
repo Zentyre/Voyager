@@ -248,7 +248,7 @@ coordinate. Each keeps its own memory file (`memory/<username>.json`) either way
 | **Farm**   | Harvests ripe wheat, carrots, potatoes and beetroots and replants them. If there's no field, it makes a hoe, gets seeds (wheat seeds from grass), tills up to `farmSize` plots next to water and plants them, only where crops get enough light (daylight, or torchlight underground): a pool in a cave is passed over for water out in the open. It brings a bucket of water if there's none nearby. Then it waits for the crops to grow, using bone meal if it has any. |
 | **Breed**  | Feeds pairs of adult cows, sheep, pigs, chickens, rabbits or goats the right food (wheat, carrots, seeds…), getting or growing the food first. |
 | **Brew**   | Uses the water bottles it has (only fills, or makes, the ones it's short of), says what it still needs, and runs them through a brewing stand: water → awkward → healing, swiftness, night vision, etc. Can make them long, strong or splash. |
-| **Sleep**  | Sleeps in a nearby bed at night or in thunderstorms. `!sleep` makes and places a bed if needed (wool from sheep + planks). |
+| **Sleep**  | Sleeps in a nearby bed at night or in thunderstorms. `!sleep` makes and places a bed if needed (wool from sheep + planks), and picks its own bed back up in the morning. |
 | **Water**  | Makes a bucket, fills it, and places water: for new farms, or under itself to put out fire. |
 | **Hunt**   | Items that come from mobs (leather, beef, wool, feathers, string, bones…). Animals always get critical hits (it stops sprinting, jumps, and hits on the way down). It skips babies (no drops) and anything with a name tag. It never hunts pets, horses, villagers, golems or creepers. |
 | **Armor**  | Wears the best armor it carries (leather → gold → chainmail → iron → diamond → netherite) and a shield in its off-hand. Upgrades as soon as it picks up something better. |
@@ -411,7 +411,10 @@ uploaded with the dashboard's Upload button).
   puts up a tower beside it and builds from the top, then breaks the tower
   on the way down and picks the blocks up again. It uses **scaffolding** when
   it has some (or a chest nearby does), otherwise dirt or cobblestone. Towers
-  never go where the build has a block.
+  never go where the build has a block. Blocks it put down just to climb or
+  bridge on its way round (pillars, steps) are broken and picked up again when
+  the build is done; ones filling a shaft it climbed out of a mine are left, so
+  no hole opens up.
 - **What's in the way:** grass, flowers, leaves and natural ground (dirt,
   stone, sand...) are dug out. Anything else is left alone and reported,
   unless you add `clear`. It never digs through the build on its way around.

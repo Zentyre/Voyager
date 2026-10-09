@@ -176,6 +176,7 @@ function installSurvival(ctx) {
 
     async function goToBed({ getBed = false }) {
         let bed = findBed(config.stationRadius * 4);
+        let ownBed = false; // put down for tonight: picked up again after
         if (!bed && getBed) {
             let have = bot.inventory.items().find((i) => i.name.endsWith("_bed"));
             if (!have) {
@@ -187,7 +188,7 @@ function installSurvival(ctx) {
                 have = bot.inventory.items().find((i) => i.name.endsWith("_bed"));
             }
             bed = await ctx.during("Placing a bed", () => ctx.act(() => ctx.placeNearby(have.name)));
-            learn.remember("block", bed.name, bed.position);
+            ownBed = true;
         }
         if (!bed) throw new Error("no bed nearby");
 
@@ -210,7 +211,31 @@ function installSurvival(ctx) {
             return true;
         } finally {
             sleeping = false;
+            if (ownBed) await pickUpBed(bed);
         }
+    }
+
+    // Break the bed it put down and take it along again.
+    async function pickUpBed(bed) {
+        await ctx.during("Picking up my bed", async () => {
+            for (let i = 0; i < 40 && bot.isSleeping; i++) await ctx.wait(250);
+            if (bot.isSleeping) await bot.wake().catch(() => {});
+            const block = bot.blockAt(bed.position);
+            if (!block?.name.endsWith("_bed")) return; // gone already
+            try {
+                if (block.position.distanceTo(bot.entity.position.offset(0, 1.62, 0)) > 4.5) {
+                    await ctx.withTimeout(bot.pathfinder.goto(new goals.GoalNear(block.position.x, block.position.y, block.position.z, 2)), 20000);
+                }
+                await bot.dig(bot.blockAt(bed.position), true);
+                await ctx.wait(400);
+                await ctx.pickUpDrops(block.name, 6);
+                learn.forget("block", [block.name], block.position);
+                ctx.log(`Picked my ${ctx.pretty(block.name)} back up.`);
+            } catch (err) {
+                if (err instanceof ctx.Stopped) throw err;
+                ctx.log(`Couldn't pick my bed back up: ${err.message}`);
+            }
+        });
     }
 
     // Stand where one half of the bed can be seen, and return that half. Being

@@ -668,6 +668,50 @@ function installBuilding(ctx) {
         return true;
     }
 
+    // Blocks the pathfinder put down to climb or bridge on its way round the
+    // build (it towers up when that's quicker than walking round). Broken
+    // again at the end, top down, and picked up; only blocks still there
+    // and of the kinds it climbs with.
+    async function clearLitter() {
+        // (the pathfinder's list is of item ids; compare by name)
+        const climbWith = new Set([...TOWER, ...bot.pathfinder.movements.scafoldingBlocks.map((id) => bot.registry.items[id]?.name)]);
+        // Only blocks standing out in the open (air on two sides or more: a
+        // pillar, a bridge), not ones filling a shaft it climbed up out of a
+        // mine: taking those out would only open the hole up again.
+        const inShaft = (p) => [[1, 0], [-1, 0], [0, 1], [0, -1]].filter(([dx, dz]) => bot.blockAt(p.offset(dx, 0, dz))?.boundingBox !== "block").length < 2;
+        const ours = (p) => {
+            const b = bot.blockAt(p);
+            return b && climbWith.has(b.name) && !job.spots.has(`${p.x},${p.y},${p.z}`) && !inShaft(p) ? b : null;
+        };
+        let cleared = 0;
+        for (let round = 0; round < 3 && job.litter.length; round++) {
+            const list = job.litter.splice(0).filter(ours).sort((a, b) => b.y - a.y);
+            // Standing on a pillar of them: climb down it, breaking each one under us.
+            const feet = bot.entity.position.floored();
+            const under = list.filter((p) => p.x === feet.x && p.z === feet.z && p.y < feet.y);
+            if (under.length && under[0].y === feet.y - 1) {
+                ctx.doing("Climbing down the blocks I put up");
+                await ctx.climbDown(under.slice().reverse()).catch(() => {});
+            }
+            for (const p of list) {
+                ctx.checkStop();
+                if (!ours(p)) continue;
+                ctx.doing(`Clearing away the ${ctx.pretty(ours(p).name)} I climbed on at ${ctx.fmt(p)}`);
+                await ctx.safely(async () => {
+                    await getNear(p);
+                    const b = ours(p);
+                    if (b) await dig(b);
+                    cleared++;
+                });
+            }
+        }
+        if (job.tower) await ctx.safely(towerDown);
+        if (cleared) {
+            ctx.log(`Cleared away ${cleared} block${cleared === 1 ? "" : "s"} I'd climbed on.`);
+            await ctx.safely(() => ctx.pickUpDrops(null, 8));
+        }
+    }
+
     async function takeDownScaffold() {
         for (const p of job.scaffold.slice().reverse()) {
             const b = bot.blockAt(p);
@@ -691,6 +735,7 @@ function installBuilding(ctx) {
     async function build(options) {
         job = await prepare(options);
         job.scaffold = [];
+        job.litter = [];
         job.tower = null;
         job.towerFrom = Infinity;
         job.state = "starting";
@@ -705,6 +750,15 @@ function installBuilding(ctx) {
         const noPlace = (b) => (inBox(b.position, job.box) ? 1000 : 0);
         movements.exclusionAreasBreak.push(noBreak);
         movements.exclusionAreasPlace.push(noPlace);
+        // Note what the pathfinder puts down on the way (see clearLitter).
+        const place = bot.placeBlock;
+        bot.placeBlock = async (ref, face) => {
+            const spot = ref.position.plus(face);
+            const byPathfinder = bot.pathfinder.isBuilding();
+            const result = await place(ref, face);
+            if (byPathfinder) job.litter.push(spot);
+            return result;
+        };
         try {
             // Already there from an earlier go?
             for (const t of job.targets) if (matches(bot.blockAt(t.pos), t.want)) setState(t, "done");
@@ -761,12 +815,14 @@ function installBuilding(ctx) {
             for (const t of job.targets) if (t.state === "todo") setState(t, "failed");
             if (job.tower) await ctx.safely(towerDown);
             await takeDownScaffold();
+            await clearLitter();
             job.state = "finished";
             ctx.say(summary());
         } catch (err) {
             job.state = err instanceof ctx.Stopped ? "stopped" : "failed";
             throw err;
         } finally {
+            bot.placeBlock = place;
             movements.exclusionAreasBreak.splice(movements.exclusionAreasBreak.indexOf(noBreak), 1);
             movements.exclusionAreasPlace.splice(movements.exclusionAreasPlace.indexOf(noPlace), 1);
         }
