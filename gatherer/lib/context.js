@@ -131,14 +131,27 @@ function createContext(bot, config) {
     // back to. Only when there's none does it make a new one. Never one with
     // a creeper it ran from standing by it.
     const STATION = "station";
-    const usableStation = (pos) => !ctx.lurkerNear?.(pos);
+    // One right by the bot is always fine (a creeper that close and it would
+    // be running already). Skipping one says so, once a minute.
+    const skipped = new Map(); // position -> when it said so
+    const usableStation = (pos, name = null) => {
+        if (pos.distanceTo(bot.entity.position) <= 6) return true;
+        const lurker = ctx.lurkerNear?.(pos);
+        if (!lurker) return true;
+        if (name && Date.now() - (skipped.get(String(pos)) || 0) > 60000) {
+            skipped.set(String(pos), Date.now());
+            ctx.log(`Not using the ${ctx.pretty(name)} at ${ctx.fmt(pos)}: the ${ctx.pretty(lurker.name)} I ran from is near it.`);
+        }
+        return false;
+    };
     ctx.findStation = (name) => {
-        const id = bot.registry.blocksByName[name].id;
+        const id = bot.registry.blocksByName[name]?.id;
+        if (id === undefined) return null;
         const me = bot.entity.position;
         const near = bot
             .findBlocks({ matching: id, maxDistance: config.workbenchRange ?? 64, count: 16 })
-            .filter(usableStation)
-            .sort((a, b) => a.distanceTo(me) - b.distanceTo(me))[0];
+            .sort((a, b) => a.distanceTo(me) - b.distanceTo(me))
+            .find((pos) => usableStation(pos, name));
         return near ? bot.blockAt(near) : null;
     };
     // Ones it knows of out of sight, its own first, nearest first.

@@ -53,14 +53,14 @@ function installSurvival(ctx) {
         return Object.values(bot.entities).find((e) => ctx.ranFrom?.(e) && e.isValid && e.position.distanceTo(me) < 24);
     }
 
-    // A mob we ran from (a creeper) that would come for the bot again if it
+    // A creeper (or warden) we ran from that would come for the bot again if it
     // went to `pos`: there, a creeper would see it (16 blocks), or the way
     // there passes it. Creepers don't burn in the day, so one standing by the
     // furnace can stay there for good.
     ctx.lurkerNear = (pos) => {
         const me = bot.entity.position;
         return Object.values(bot.entities).find(
-            (e) => ctx.ranFrom?.(e) && e.isValid && e.position && (e.position.distanceTo(pos) < 16 || fromLine(e.position, me, pos) < 8)
+            (e) => ctx.ranFrom?.(e) && kb.FLEE_FROM.has(e.name) && e.isValid && e.position && (e.position.distanceTo(pos) < 16 || fromLine(e.position, me, pos) < 8)
         );
     };
     // How far `p` is from the straight line from `a` to `b`.

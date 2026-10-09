@@ -247,7 +247,7 @@ coordinate. Each keeps its own memory file (`memory/<username>.json`) either way
 | **Smelt**  | Ores, sand → glass, cobblestone → stone, logs → charcoal, raw meat → cooked, etc. Builds a furnace and collects fuel (coal or planks) if needed. |
 | **Farm**   | Harvests ripe wheat, carrots, potatoes and beetroots and replants them. If there's no field, it makes a hoe, gets seeds (wheat seeds from grass), tills up to `farmSize` plots next to water and plants them, only where crops get enough light (daylight, or torchlight underground): a pool in a cave is passed over for water out in the open. It brings a bucket of water if there's none nearby. Then it waits for the crops to grow, using bone meal if it has any. |
 | **Breed**  | Feeds pairs of adult cows, sheep, pigs, chickens, rabbits or goats the right food (wheat, carrots, seeds…), getting or growing the food first. |
-| **Brew**   | Fills water bottles and runs them through a brewing stand: water → awkward → healing, swiftness, night vision, etc. Can make them long, strong or splash. |
+| **Brew**   | Uses the water bottles it has (only fills, or makes, the ones it's short of), says what it still needs, and runs them through a brewing stand: water → awkward → healing, swiftness, night vision, etc. Can make them long, strong or splash. |
 | **Sleep**  | Sleeps in a nearby bed at night or in thunderstorms. `!sleep` makes and places a bed if needed (wool from sheep + planks). |
 | **Water**  | Makes a bucket, fills it, and places water: for new farms, or under itself to put out fire. |
 | **Hunt**   | Items that come from mobs (leather, beef, wool, feathers, string, bones…). Animals always get critical hits (it stops sprinting, jumps, and hits on the way down). It skips babies (no drops) and anything with a name tag. It never hunts pets, horses, villagers, golems or creepers. |
@@ -273,7 +273,10 @@ stone_pickaxe: craft from 3 cobblestone, 2 stick (crafting table)
 The plan adapts to your inventory and surroundings. It uses birch if birch trees
 are what's nearby, skips steps for things it already has, and reuses a crafting
 table, furnace or brewing stand instead of making a new one: the nearest one in
-sight within `workbenchRange` (64 blocks), or one it knows of further off. Every
+sight within `workbenchRange` (64 blocks), or one it knows of further off. To
+smelt it uses the nearest blast furnace (ores, raw metal), smoker (food) or
+furnace. One with a creeper it ran from nearby is passed over (the log says so),
+unless the bot is right next to it. Every
 workbench it uses or puts down becomes its own and is remembered (in its memory
 file, so across restarts, and shared with the crew); when none is in sight it
 walks back to the nearest of those. One that's been taken away is forgotten.

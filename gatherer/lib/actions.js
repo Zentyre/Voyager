@@ -752,6 +752,30 @@ function installActions(ctx) {
         return block;
     }
 
+    // Somewhere to smelt `input` into `output`: the nearest blast furnace,
+    // smoker (when they can take it) or furnace in sight, else the nearest one
+    // it knows of, else a new furnace.
+    async function ensureSmelter(input, output, seen) {
+        const types = kb.smelters(input, output);
+        const me = bot.entity.position;
+        const inSight = types.map((t) => ctx.findStation(t)).filter(Boolean).sort((a, b) => a.position.distanceTo(me) - b.position.distanceTo(me))[0];
+        if (inSight) {
+            ctx.rememberStation(inSight.name, inSight.position);
+            return inSight;
+        }
+        const known = types
+            .flatMap((t) => ctx.knownStations(t).map((pos) => ({ t, pos })))
+            .sort((a, b) => a.pos.distanceTo(me) - b.pos.distanceTo(me))[0];
+        if (known) {
+            const block = await backToStation(known.t);
+            if (block) {
+                ctx.rememberStation(block.name, block.position);
+                return block;
+            }
+        }
+        return ensureStation("furnace", seen);
+    }
+
     async function backToStation(name) {
         const what = `the ${ctx.pretty(name)}`;
         for (const pos of ctx.knownStations(name).slice(0, 3)) {
@@ -820,12 +844,15 @@ function installActions(ctx) {
     async function smelt(name, target, input, seen) {
         const amount = target - ctx.countItem(name);
         await obtain(input, amount, seen);
-        const furnaceBlock = await ensureStation("furnace", seen);
+        const furnaceBlock = await ensureSmelter(input, name, seen);
+        const what = `the ${ctx.pretty(furnaceBlock.name)}`;
+        // A blast furnace or smoker burns fuel twice as fast.
+        const burn = furnaceBlock.name === "furnace" ? 1 : 2;
         ctx.doing(`Getting fuel to smelt ${ctx.pretty(input)}`);
-        await ensureFuel(amount, input, seen);
+        await ensureFuel(amount * burn, input, seen);
         await obtain(input, amount, seen); // planks for fuel may have used up logs
-        await goToStation(furnaceBlock, "the furnace");
-        ctx.doing("Loading the furnace");
+        await goToStation(furnaceBlock, what);
+        ctx.doing(`Loading ${what}`);
 
         let furnace = await bot.openFurnace(furnaceBlock);
         try {
@@ -833,7 +860,7 @@ function installActions(ctx) {
             const leftover = furnace.inputItem();
             if (leftover && leftover.name !== input) await furnace.takeInput();
 
-            await addFuel(furnace, amount, input);
+            await addFuel(furnace, amount * burn, input);
             const inputItem = bot.registry.itemsByName[input];
             let toLoad = amount;
             // The input slot holds one stack; top it up as it empties.
@@ -854,7 +881,7 @@ function installActions(ctx) {
                     furnace.close();
                     await ctx.guard();
                     // (what's in it stays there if a creeper keeps us away)
-                    await goToStation(furnaceBlock, "the furnace");
+                    await goToStation(furnaceBlock, what);
                     furnace = await bot.openFurnace(furnaceBlock);
                 }
                 if (furnace.outputItem()) {
@@ -866,12 +893,12 @@ function installActions(ctx) {
                 // Out of fuel with work left: top up right away.
                 if (!furnace.fuelItem() && furnace.fuel <= 0 && furnace.inputItem()) {
                     const before = furnace.fuelItem()?.count || 0;
-                    await addFuel(furnace, target - ctx.countItem(name), input);
+                    await addFuel(furnace, (target - ctx.countItem(name)) * burn, input);
                     if ((furnace.fuelItem()?.count || 0) === before) throw new Error(`ran out of fuel for ${name}`);
                     lastProgress = Date.now();
                     continue;
                 }
-                if (Date.now() - lastProgress > 15000) throw new Error(`furnace stopped making ${name}`);
+                if (Date.now() - lastProgress > 15000) throw new Error(`${what} stopped making ${name}`);
                 for (let i = 0; i < 4 && !ctx.threatNearby(); i++) await ctx.wait(250);
             }
             // Leave nothing behind in the furnace that we put in.

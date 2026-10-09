@@ -248,6 +248,18 @@ function createKnowledge(bot, config) {
             .map((b) => b.id);
     }
 
+    // Which kinds of furnace can smelt `input` into `output`, best first: a
+    // blast furnace takes ores, raw metal and metal gear, a smoker food (both
+    // twice as fast), a furnace anything.
+    const BLASTABLE = /^raw_(iron|gold|copper)$|_ore$|^ancient_debris$|^(iron|golden|chainmail)_(helmet|chestplate|leggings|boots|sword|pickaxe|axe|shovel|hoe|horse_armor)$/;
+    function smelters(input, output) {
+        const out = [];
+        if (BLASTABLE.test(input)) out.push("blast_furnace");
+        if (isFood(output)) out.push("smoker");
+        out.push("furnace");
+        return out;
+    }
+
     function isFood(name) {
         return Boolean(registry.foodsByName[name]);
     }
@@ -263,6 +275,7 @@ function createKnowledge(bot, config) {
         craftingRecipes,
         recipeIngredients,
         smeltInputs,
+        smelters,
         harvestTools,
         cropFor,
         cropMaxAge,

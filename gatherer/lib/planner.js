@@ -183,7 +183,7 @@ function createPlanner(ctx) {
         // Smelting
         for (const input of kb.smeltInputs(name)) {
             let cost = COST.smelt + estimate(input, depth + 1, path, missing);
-            if (!ctx.stationNearby("furnace")) cost += estimate("furnace", depth + 1, path);
+            if (!kb.smelters(input, name).some((t) => ctx.stationNearby(t))) cost += estimate("furnace", depth + 1, path);
             if (ctx.fuelInInventory() === 0) cost += 1;
             options.push({ type: "smelt", cost, input });
         }
@@ -311,7 +311,7 @@ function createPlanner(ctx) {
                 break;
             case "smelt":
                 lines.push(`${indent}${name}: smelt ${p.input}`);
-                if (!ctx.stationNearby("furnace")) explain("furnace", sub, next, lines, shown);
+                if (!kb.smelters(p.input, name).some((t) => ctx.stationNearby(t))) explain("furnace", sub, next, lines, shown);
                 explain(p.input, sub, next, lines, shown);
                 break;
             case "hunt":

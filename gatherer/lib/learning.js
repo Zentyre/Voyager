@@ -35,7 +35,7 @@ const UNREACHABLE_MS = 6 * 3600 * 1000;
 const MAX_PLACES_PER_NAME = 60;
 
 // Blocks worth remembering when seen in passing.
-const WORTH_REMEMBERING = /_ore$|_log$|^(sand|red_sand|clay|gravel|sugar_cane|pumpkin|melon|bamboo|obsidian|ancient_debris)$|_bed$|^(chest|crafting_table|furnace|brewing_stand)$/;
+const WORTH_REMEMBERING = /_ore$|_log$|^(sand|red_sand|clay|gravel|sugar_cane|pumpkin|melon|bamboo|obsidian|ancient_debris)$|_bed$|^(chest|barrel|crafting_table|furnace|blast_furnace|smoker|brewing_stand)$/;
 
 function createLearning(ctx) {
     const { bot, config } = ctx;

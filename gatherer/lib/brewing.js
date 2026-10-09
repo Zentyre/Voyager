@@ -28,34 +28,44 @@ function installBrewing(ctx) {
         return chain;
     }
 
-    function potionSlots() {
-        return new Set(bot.inventory.items().filter((i) => i.name === "potion").map((i) => i.slot));
+    // A water bottle: a "potion" whose contents are water (id 0 in the
+    // game's potion list; finished potions have other ids).
+    const WATER = 0;
+    function isWaterBottle(item) {
+        if (item?.name !== "potion") return false;
+        const contents = item.componentMap?.get("potion_contents")?.data;
+        if (contents) return contents.potionId === WATER;
+        const nbt = item.nbt?.value?.Potion?.value; // before components (1.20.4 and older)
+        return nbt === "minecraft:water";
     }
+    const waterBottles = () => bot.inventory.items().filter(isWaterBottle);
+    ctx.waterBottleCount = () => waterBottles().length;
 
-    // Fill `count` glass bottles at a water source. Returns the inventory slots
-    // of the new water bottles (all potions share the item name "potion", so
-    // this is how we tell them apart from finished potions).
+    // `count` water bottles, using the ones in the bag first; only the rest
+    // get filled, from empty bottles in the bag before any are made (making
+    // them means glass, so sand and a furnace). Returns their slots.
     async function fillBottles(count, seen) {
-        const already = potionSlots();
-        const before = ctx.countItem("potion");
-        await ctx.obtain("glass_bottle", count, seen);
-        ctx.doing(`Filling ${count} water bottle${count === 1 ? "" : "s"}`);
-        for (let attempt = 0; ctx.countItem("potion") - before < count && attempt < count * 2 + 4; attempt++) {
-            ctx.checkStop();
-            const source = ctx.findWaterSource();
-            if (!source) {
-                await ctx.explore("block", ["water"], () => [ctx.findWaterSource()].filter(Boolean));
-                continue;
+        const short = () => count - waterBottles().length;
+        if (short() > 0) {
+            if (ctx.countItem("glass_bottle") < short()) await ctx.obtain("glass_bottle", short(), seen);
+            ctx.doing(`Filling ${short()} water bottle${short() === 1 ? "" : "s"}`);
+            for (let attempt = 0; short() > 0 && attempt < count * 2 + 4; attempt++) {
+                ctx.checkStop();
+                const source = ctx.findWaterSource();
+                if (!source) {
+                    await ctx.explore("block", ["water"], () => [ctx.findWaterSource()].filter(Boolean));
+                    continue;
+                }
+                await ctx.act(() => ctx.goTo(source.position, 3, "the water"));
+                const bottle = bot.inventory.items().find((i) => i.name === "glass_bottle");
+                if (!bottle) break;
+                await bot.equip(bottle, "hand");
+                await bot.lookAt(source.position.offset(0.5, 0.9, 0.5), true);
+                bot.activateItem();
+                await bot.waitForTicks(4);
             }
-            await ctx.act(() => ctx.goTo(source.position, 3, "the water"));
-            const bottle = bot.inventory.items().find((i) => i.name === "glass_bottle");
-            if (!bottle) break;
-            await bot.equip(bottle, "hand");
-            await bot.lookAt(source.position.offset(0.5, 0.9, 0.5), true);
-            bot.activateItem();
-            await bot.waitForTicks(4);
         }
-        return [...potionSlots()].filter((slot) => !already.has(slot)).slice(0, count);
+        return waterBottles().slice(0, count).map((i) => i.slot);
     }
 
     // Move `count` items of `name` from our inventory into a window slot.
@@ -93,10 +103,20 @@ function installBrewing(ctx) {
         const fuelNeeded = Math.ceil((ingredients.length * batches) / BREWS_PER_BLAZE_POWDER);
         ctx.say(`Brewing ${count} ${modifier ? modifier + " " : ""}${potion}: ${ingredients.join(" → ")}.`);
 
+        // What it has already, and what it still has to get.
+        const needs = new Map([["water bottle", count]]);
+        for (const ing of ingredients) needs.set(ing, (needs.get(ing) || 0) + batches);
+        needs.set("blaze_powder", (needs.get("blaze_powder") || 0) + fuelNeeded);
+        const has = (name) => (name === "water bottle" ? waterBottles().length : ctx.countItem(name));
+        const missing = [...needs].filter(([name, n]) => has(name) < n).map(([name, n]) => `${n - has(name)} ${name}`);
+        const stationKnown = ctx.stationNearby("brewing_stand");
+        if (!stationKnown) missing.push("a brewing stand");
+        ctx.log(missing.length ? `For the potions I still need ${missing.join(", ")}.` : "I have everything for the potions.");
+
         // Gather everything first so we fail early on Nether-only items.
         ctx.doing("Gathering the ingredients");
-        for (const ing of ingredients) await ctx.obtain(ing, batches, seen);
-        await ctx.obtain("blaze_powder", fuelNeeded, seen);
+        for (const ing of ingredients) await ctx.obtain(ing, needs.get(ing), seen);
+        await ctx.obtain("blaze_powder", needs.get("blaze_powder"), seen);
         const stand = await ctx.ensureStation("brewing_stand", seen);
 
         const done = learn.begin("brew", potion, count);
@@ -109,7 +129,7 @@ function installBrewing(ctx) {
 
                 await ctx.act(() => ctx.goTo(stand.position, 2, "the brewing stand"));
                 ctx.doing(`Brewing batch ${batch + 1}/${batches}`);
-                const window = await bot.openContainer(stand);
+                const window = await bot.openBlock(stand); // openContainer only takes chests and the like
                 try {
                     if (!window.slots[SLOT_FUEL]) await putIn(window, "blaze_powder", SLOT_FUEL);
                     for (let slot = 0; slot < size; slot++) {
