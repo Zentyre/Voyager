@@ -258,7 +258,12 @@ stone_pickaxe: craft from 3 cobblestone, 2 stick (crafting table)
 
 The plan adapts to your inventory and surroundings. It uses birch if birch trees
 are what's nearby, skips steps for things it already has, and reuses a crafting
-table or furnace within `stationRadius`.
+table, furnace or brewing stand instead of making a new one: the nearest one in
+sight within `workbenchRange` (64 blocks), or one it knows of further off. Every
+workbench it uses or puts down becomes its own and is remembered (in its memory
+file, so across restarts, and shared with the crew); when none is in sight it
+walks back to the nearest of those. One that's been taken away is forgotten.
+The dashboard map shows them as small squares (hover for which and where).
 
 ## Water
 
@@ -410,7 +415,8 @@ with its progress and what's still to place (what it has and what's in chests).
 | `commandPrefix`      | `"!"`         | Chat commands must start with this                                |
 | `viewDistance`       | `"normal"`    | Chunks requested from the server: `tiny` 6, `short` 8, `normal` 10, `far` 12. More = sees further, more RAM. Capped by the server's own view-distance |
 | `searchRadius`       | `110`         | How far (blocks) to look for resources and mobs (keep under view distance × 16) |
-| `stationRadius`      | `24`          | Reuse a crafting table / furnace / bed within this distance       |
+| `stationRadius`      | `24`          | Beds: it looks for one to sleep in within four times this (96 blocks) |
+| `workbenchRange`     | `64`          | Use a crafting table / furnace / brewing stand within this distance (seen or remembered) instead of making one |
 | `exploreDistance`    | `64`          | How far to wander when nothing is in range                        |
 | `maxExploreAttempts` | `8`           | Give up on an item after this many fruitless wanders              |
 | `chest`              | `null`        | `{ "x": 0, "y": 64, "z": 0 }`: where to unload when full / done   |

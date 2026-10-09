@@ -878,6 +878,18 @@ function drawMap() {
     g.fill();
     mapTargets.push({ x, y, r: 7, text: `Home (${h.x} ${h.y} ${h.z})` });
   }
+  // Workbenches the bots use (their remembered crafting tables, furnaces…).
+  const benches = [];
+  for (const b of here) for (const w of b.workbenches || []) if (!benches.some((o) => o.x === w.x && o.y === w.y && o.z === w.z)) benches.push(w);
+  for (const w of benches) {
+    const x = sx(w.x), y = sz(w.z);
+    if (x < 0 || y < 0 || x > W || y > H) continue;
+    g.fillStyle = color("--muted");
+    g.fillRect(x - 3, y - 3, 6, 6);
+    g.fillStyle = color(w.name === "crafting_table" ? "--warn" : "--info");
+    g.fillRect(x - 2, y - 2, 4, 4);
+    mapTargets.push({ x, y, r: 5, text: `${pretty(w.name)} (${w.x} ${w.y} ${w.z})` });
+  }
   for (const p of players) {
     const x = sx(p.pos.x), y = sz(p.pos.z);
     face(p.skin, p.name, x, y, 12);

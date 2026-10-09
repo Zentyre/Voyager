@@ -48,6 +48,7 @@ try {
 }
 
 const ARMOR_PIECES = ["helmet", "chestplate", "leggings", "boots"];
+const WORKBENCHES = ["crafting_table", "furnace", "brewing_stand", "smoker", "blast_furnace"];
 const GEAR = /_(pickaxe|axe|shovel|hoe|sword|helmet|chestplate|leggings|boots)$|^(bow|shield|arrow|spectral_arrow|tipped_arrow|bucket|water_bucket)$/;
 
 // The server's Minecraft version, if the bot can speak it; otherwise the
@@ -380,6 +381,7 @@ function createBot(config, crew, reporter) {
             weather: bot.thunderState > 0 ? "thunder" : bot.isRaining ? "rain" : "clear",
             day: bot.time?.day ?? null,
             home: ctx.home ? floorPos(ctx.home) : null,
+            workbenches: e && ctx.learn ? ctx.learn.recall("station", WORKBENCHES, e.position, 256).slice(0, 12).map(({ name, x, y, z }) => ({ name, x, y, z })) : [],
             stats: ctx.learn ? (({ kills = 0, deaths = 0 }) => ({ kills, deaths }))(ctx.learn.stats()) : null,
             players: e ? playerList() : [],
             profile: ctx.profiles?.name || "default",

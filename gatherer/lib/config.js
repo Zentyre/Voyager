@@ -16,6 +16,7 @@ const DEFAULTS = {
     viewDistance: "normal",
     searchRadius: 110,
     stationRadius: 24,
+    workbenchRange: 64, // go back to a crafting table / furnace it knows of within this, rather than make one
     exploreDistance: 64,
     maxExploreAttempts: 8,
     chest: null,

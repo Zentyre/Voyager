@@ -29,7 +29,7 @@ function createContext(bot, config) {
         current: null,
         queue: [],
         home: null,
-        placedStations: [], // crafting tables / furnaces we put down
+        placedStations: [], // workbenches used or put down this session: { name, pos }
     };
 
     // Prefix with the in-game name once logged in (Microsoft accounts have
@@ -125,22 +125,64 @@ function createContext(bot, config) {
 
     // A crafting table / furnace nearby, or one we placed earlier within reach
     // of a short walk.
-    // Not one with a creeper (that it ran from) standing by it: it makes
-    // another instead.
+    // Workbenches (crafting tables, furnaces, brewing stands): the nearest
+    // one it can see within workbenchRange, or one it knows of (it used or
+    // put down before, remembered across restarts, or saw on the way) to go
+    // back to. Only when there's none does it make a new one. Never one with
+    // a creeper it ran from standing by it.
+    const STATION = "station";
+    const usableStation = (pos) => !ctx.lurkerNear?.(pos);
     ctx.findStation = (name) => {
         const id = bot.registry.blocksByName[name].id;
-        const usable = (pos) => !ctx.lurkerNear?.(pos);
-        const near = bot.findBlocks({ matching: id, maxDistance: config.stationRadius, count: 8 }).find(usable);
-        if (near) return bot.blockAt(near);
         const me = bot.entity.position;
-        const placed = ctx.placedStations
-            .filter((pos) => pos.distanceTo(me) <= config.stationRadius * 3 && usable(pos))
-            .map((pos) => bot.blockAt(pos))
-            .filter((block) => block?.type === id)
-            .sort((a, b) => a.position.distanceTo(me) - b.position.distanceTo(me));
-        return placed[0] || null;
+        const near = bot
+            .findBlocks({ matching: id, maxDistance: config.workbenchRange ?? 64, count: 16 })
+            .filter(usableStation)
+            .sort((a, b) => a.distanceTo(me) - b.distanceTo(me))[0];
+        return near ? bot.blockAt(near) : null;
     };
-    ctx.stationNearby = (name) => Boolean(ctx.findStation(name));
+    // Ones it knows of out of sight, its own first, nearest first.
+    ctx.knownStations = (name) => {
+        const me = bot.entity.position;
+        const range = config.workbenchRange ?? 64;
+        const mine = [
+            ...(ctx.learn?.recall(STATION, [name], me, range) || []),
+            ...ctx.placedStations.filter((s) => s.name === name && s.pos.distanceTo(me) <= range).map((s) => ({ x: s.pos.x, y: s.pos.y, z: s.pos.z })),
+        ];
+        const seen = ctx.learn?.recall("block", [name], me, range) || [];
+        const out = [];
+        for (const s of [...mine, ...seen]) {
+            const pos = new Vec3(s.x, s.y, s.z);
+            if (out.some((o) => o.equals(pos)) || !usableStation(pos)) continue;
+            const block = bot.blockAt(pos);
+            if (block && block.name !== name) {
+                ctx.forgetStation(name, pos); // loaded, and not there any more
+                continue;
+            }
+            out.push(pos);
+        }
+        return out;
+    };
+    ctx.rememberStation = (name, pos) => {
+        nearbyCache.delete(name);
+        if (!ctx.placedStations.some((s) => s.name === name && s.pos.equals(pos))) ctx.placedStations.push({ name, pos: pos.clone() });
+        ctx.learn?.remember(STATION, name, pos);
+    };
+    ctx.forgetStation = (name, pos) => {
+        nearbyCache.delete(name);
+        ctx.placedStations = ctx.placedStations.filter((s) => !(s.name === name && s.pos.equals(pos)));
+        ctx.learn?.forget(STATION, [name], pos);
+        ctx.learn?.forget("block", [name], pos);
+    };
+    // (asked for every recipe while planning: worked out once every few seconds)
+    const nearbyCache = new Map();
+    ctx.stationNearby = (name) => {
+        const hit = nearbyCache.get(name);
+        if (hit && Date.now() - hit.t < 3000) return hit.yes;
+        const yes = Boolean(ctx.findStation(name)) || ctx.knownStations(name).length > 0;
+        nearbyCache.set(name, { t: Date.now(), yes });
+        return yes;
+    };
 
     ctx.fuelInInventory = (exclude) =>
         bot.inventory

@@ -735,15 +735,42 @@ function installActions(ctx) {
     }
 
     // Find a crafting table / furnace nearby, or make and place one.
+    // A workbench to use: the nearest one in sight, else one it knows of
+    // (walking back to it), else a new one. Whichever it uses becomes its
+    // own, remembered for next time.
     async function ensureStation(name, seen) {
-        let block = ctx.findStation(name);
-        if (block) return block;
+        let block = ctx.findStation(name) || (await backToStation(name));
+        if (block) {
+            ctx.rememberStation(name, block.position);
+            return block;
+        }
         if (seen.has(name)) throw new Error(`need a ${name} to make a ${name}`);
         await obtain(name, 1, seen);
         block = await ctx.during(`Placing a ${ctx.pretty(name)}`, () => ctx.act(() => placeNearby(name)));
-        ctx.placedStations.push(block.position);
-        ctx.say(`Placed a ${name} at ${ctx.fmt(block.position)}.`);
+        ctx.rememberStation(name, block.position);
+        ctx.say(`Placed a ${name} at ${ctx.fmt(block.position)}; I'll use it from now on.`);
         return block;
+    }
+
+    async function backToStation(name) {
+        const what = `the ${ctx.pretty(name)}`;
+        for (const pos of ctx.knownStations(name).slice(0, 3)) {
+            ctx.log(`Going back to ${what} at ${ctx.fmt(pos)}.`);
+            try {
+                await goToStation({ position: pos }, what);
+            } catch (err) {
+                if (err instanceof ctx.Stopped || err instanceof ctx.Retry) throw err;
+                ctx.log(`Couldn't get to ${what} at ${ctx.fmt(pos)}: ${err.message}`);
+                continue;
+            }
+            const there = bot.blockAt(pos);
+            if (there?.name === name) return there;
+            ctx.log(`${what[0].toUpperCase()}${what.slice(1)} at ${ctx.fmt(pos)} is gone.`);
+            ctx.forgetStation(name, pos);
+            const other = ctx.findStation(name);
+            if (other) return other;
+        }
+        return null;
     }
 
     async function placeNearby(name) {
