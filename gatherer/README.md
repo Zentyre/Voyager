@@ -134,6 +134,20 @@ be online twice, so a bot can't share your account while you're playing.
    themselves, so later starts need no codes. To switch a bot to another
    account, delete its files in `accounts/` and sign in again.
 
+**How long a login lasts:** Microsoft hands out a new long-term token (good
+for about 90 days) every time the bot signs in, so a bot that runs at least
+once every few months stays signed in for good. It only asks again if the
+account's password changes, the login is removed from the Microsoft account,
+or the bot goes unused for that long. The bot also guards the saved login:
+- Files are saved whole (never half-written if the program stops or restarts
+  mid-save), and the previous copy is kept as a `.bak`. A damaged file is
+  set aside (`.damaged`) and the backup used, instead of being wiped.
+- If Microsoft can't be reached when it starts (no network yet just after the
+  PC boots, say), it keeps trying for 5 minutes (`Couldn't reach Microsoft to
+  refresh the saved login …; trying again in 10 s`) instead of asking you to
+  sign in. If it does ask, the log says why (`Microsoft no longer accepts the
+  saved login (…)`).
+
 Keep `accounts/` private: it holds login tokens. It's in `.gitignore`, so it
 never gets committed. Never put passwords in the config. Sign-in always goes
 through Microsoft's page.
@@ -516,3 +530,4 @@ with its progress and what's still to place (what it has and what's in chests).
 | `lib/building.js`   | Builder: materials from chests, placing with the right facing, towers |
 | `lib/swimming.js`   | Water: air, swimming up, diving, getting out                |
 | `lib/climbing.js`   | Getting up: towers, tunnelling straight up                |
+| `lib/accounts.js`   | Saved Microsoft logins: written safely, refreshed patiently |

@@ -26,6 +26,7 @@ const { installBuilding } = require("./building");
 const { installSwimming } = require("./swimming");
 const { installClimbing } = require("./climbing");
 const { createProfiles } = require("./profiles");
+const { loginStorage } = require("./accounts");
 const { patchBot } = require("./compat");
 const { installModSupport } = require("./mods");
 const { addresses } = require("./commands");
@@ -101,8 +102,9 @@ function createBot(config, crew, reporter) {
         // Online-mode servers usually require signed chat; offline ones don't,
         // so skip the signing work there.
         disableChatSigning: !microsoft,
-        // Saved logins live in gatherer/accounts/ (git-ignored, keep private).
-        profilesFolder: path.resolve(__dirname, "..", "accounts"),
+        // Saved logins live in gatherer/accounts/ (git-ignored, keep private),
+        // kept and refreshed carefully so they last (see accounts.js).
+        profilesFolder: microsoft ? loginStorage(path.resolve(__dirname, "..", "accounts"), (m) => console.log(m)) : path.resolve(__dirname, "..", "accounts"),
         onMsaCode: (data) => {
             const text =
                 `Sign in the Minecraft account for bot "${config.username}": open ${data.verification_uri} ` +
