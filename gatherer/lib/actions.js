@@ -1000,40 +1000,71 @@ function installActions(ctx) {
         if (bot.inventory.emptySlotCount() < 2) throw new Error("inventory is still full after unloading");
     }
 
-    // Put the items we were asked to gather into the configured chest.
-    async function depositAll() {
-        return ctx.during("Emptying my bag into the chest", depositInChest);
+    // Put things in the chest it unloads into. `what`:
+    //   null        what its tasks asked for (unloading when the bag is full)
+    //   "spare"     everything but what it needs to work: tools, weapons,
+    //               armor, arrows, buckets and food stay
+    //   "all"       everything in its bag
+    //   item name   that, up to `count`
+    // Returns what went in ({ name: count }), counted from its bag before and
+    // after, so it never claims to have put in what it didn't.
+    async function depositAll(what = null, count = Infinity) {
+        return ctx.during("Emptying my bag into the chest", () => depositInChest(what, count));
     }
 
-    async function depositInChest() {
+    const KEEP = /_(pickaxe|axe|shovel|hoe|sword|spear|helmet|chestplate|leggings|boots)$|^(bow|crossbow|trident|mace|shield|arrow|spectral_arrow|tipped_arrow|bucket|water_bucket|shears|flint_and_steel|fishing_rod|totem_of_undying)$/;
+
+    async function depositInChest(what = null, count = Infinity) {
         const chestPos = new Vec3(config.chest.x, config.chest.y, config.chest.z);
+        const wanted = new Set([ctx.current, ...ctx.queue, ...config.tasks].filter(Boolean).map((t) => t.item));
+        const chosen = (item) =>
+            what === "all" ? true
+                : what === "spare" ? !KEEP.test(item.name) && !kb.isFood(item.name)
+                    : what ? item.name === what
+                        : wanted.has(item.name);
+        const inBag = () => {
+            const counts = {};
+            for (const item of bot.inventory.items()) if (chosen(item)) counts[item.name] = (counts[item.name] || 0) + item.count;
+            return counts;
+        };
+        const before = inBag();
+        if (!Object.keys(before).length) return {};
+
         await ctx.act(() => ctx.goTo(chestPos, 2, "the chest"));
         const chestBlock = bot.blockAt(chestPos);
         if (!chestBlock || !/^(chest|trapped_chest|barrel)$/.test(chestBlock.name)) {
-            ctx.say(`No chest at ${ctx.fmt(chestPos)}.`);
-            return;
+            throw new Error(`there's no chest at ${ctx.fmt(chestPos)} (${chestBlock ? `it's ${ctx.pretty(chestBlock.name)}` : "can't see it"})`);
         }
         const chest = await bot.openContainer(chestBlock);
+        let problem = null;
         try {
-            const wanted = new Set(
-                [ctx.current, ...ctx.queue, ...config.tasks].filter(Boolean).map((t) => t.item)
-            );
-            for (const item of bot.inventory.items()) {
-                if (!wanted.has(item.name)) continue;
+            let left = count;
+            for (const [name, have] of Object.entries(before)) {
+                if (left <= 0) break;
+                const n = Math.min(have, left);
                 try {
-                    await chest.deposit(item.type, null, item.count);
-                    if (ctx.current && item.name === ctx.current.item) {
-                        ctx.current.deposited += item.count;
-                    }
+                    await chest.deposit(bot.registry.itemsByName[name].id, null, n);
+                    left -= n;
                 } catch (err) {
-                    ctx.say(`Chest is full: ${err.message}`);
+                    problem = /full|space|room/i.test(err.message) ? "the chest is full" : err.message;
                     break;
                 }
             }
         } finally {
             chest.close();
         }
-        ctx.log("Deposited items in chest.");
+        await bot.waitForTicks(2); // the bag as the server left it
+        const after = inBag();
+        const moved = {};
+        for (const [name, had] of Object.entries(before)) {
+            const n = had - (after[name] || 0);
+            if (n > 0) moved[name] = n;
+        }
+        if (ctx.current && moved[ctx.current.item]) ctx.current.deposited += moved[ctx.current.item];
+        const list = Object.entries(moved).map(([n, c]) => `${c} ${n}`).join(", ");
+        ctx.log(list ? `Put ${list} in the chest at ${ctx.fmt(chestPos)}.` : `Put nothing in the chest at ${ctx.fmt(chestPos)}.`);
+        if (problem) ctx.say(`Stopped putting things in: ${problem}.`);
+        return moved;
     }
 
     Object.assign(ctx, { obtain, depositAll, pickUpDrops, nearestEntity, explore, placeNearby, ensureStation, pillarStep, climbDown });

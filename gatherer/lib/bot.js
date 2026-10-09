@@ -848,10 +848,22 @@ function createBot(config, crew, reporter) {
                 await runExclusive("come", () => ctx.goTo(player.position, 2, requester), `Coming to ${requester}`);
                 break;
             }
-            case "deposit":
-                if (!config.chest) return broadcast ? undefined : say("No chest configured.");
-                await ctx.safely(ctx.depositAll);
+            case "deposit": {
+                // deposit                 everything but its tools, weapons, armor and food
+                // deposit all             everything in its bag
+                // deposit <item> [count]  that
+                if (!config.chest) return broadcast ? undefined : say(`No chest set. Look at one and say ${config.commandPrefix}setchest.`);
+                const what = !args[0] ? "spare" : args[0].toLowerCase() === "all" ? "all" : args[0];
+                const count = args[1] ? parseInt(args[1], 10) : Infinity;
+                if (!["spare", "all"].includes(what) && !bot.registry.itemsByName[what]) return say(`There's no item called ${what}.`);
+                if (!["spare", "all"].includes(what) && ctx.countItem(what) === 0) return broadcast ? undefined : say(`I don't have any ${what}.`);
+                await runExclusive("deposit", async () => {
+                    const moved = await ctx.depositAll(what, count > 0 ? count : Infinity);
+                    const list = Object.entries(moved).map(([n, c]) => `${c} ${n}`).join(", ");
+                    say(list ? `Put ${list} in the chest.` : "Nothing went in the chest.");
+                }, "Putting things in the chest");
                 break;
+            }
             case "home":
                 if (ctx.home) await ctx.safely(() => ctx.goTo(ctx.home, 2, "home"));
                 break;
