@@ -1009,7 +1009,7 @@ function installActions(ctx) {
         const chestPos = new Vec3(config.chest.x, config.chest.y, config.chest.z);
         await ctx.act(() => ctx.goTo(chestPos, 2, "the chest"));
         const chestBlock = bot.blockAt(chestPos);
-        if (!chestBlock || !chestBlock.name.includes("chest")) {
+        if (!chestBlock || !/^(chest|trapped_chest|barrel)$/.test(chestBlock.name)) {
             ctx.say(`No chest at ${ctx.fmt(chestPos)}.`);
             return;
         }

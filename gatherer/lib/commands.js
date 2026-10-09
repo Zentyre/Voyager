@@ -8,7 +8,7 @@
 const COMMANDS = new Set([
     "get", "gather", "craft", "smelt", "plan", "farm", "plant", "breed", "brew", "sleep", "water", "bucket",
     "learned", "memory", "forget", "guard", "bodyguard", "protect", "bow", "armor", "give", "drop", "stop",
-    "say", "status", "queue", "inv", "eat", "come", "deposit", "home", "quit", "help", "crew", "profile", "build", "spin",
+    "say", "status", "queue", "inv", "eat", "come", "deposit", "home", "quit", "help", "crew", "profile", "build", "spin", "setchest",
 ]);
 
 // Is `word` (a bot's name, followed by `rest`) meant as an address?

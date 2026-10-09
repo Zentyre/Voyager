@@ -212,7 +212,7 @@ listens:
 | Command | What the crew does |
 |---------|--------------------|
 | `!get <item> <count>` (also gather/craft/smelt) | Splits the count between the bots that are free (all bots if none are free). `!get oak_log 64` with two idle bots → 32 each. |
-| `!come`, `!stop`, `!quit`, `!status`, `!inv`, `!home`, `!guard`, `!spin`, `!eat`, `!sleep`, `!deposit`, `!give`, `!armor`, `!bow`, `!forget` | Every bot does it: e.g. `!guard` gives you a squad of bodyguards, `!give oak_log` has each bot bring you its logs. Bots with nothing to add stay quiet. |
+| `!come`, `!stop`, `!quit`, `!status`, `!inv`, `!home`, `!guard`, `!spin`, `!setchest`, `!eat`, `!sleep`, `!deposit`, `!give`, `!armor`, `!bow`, `!forget` | Every bot does it: e.g. `!guard` gives you a squad of bodyguards, `!give oak_log` has each bot bring you its logs. Bots with nothing to add stay quiet. |
 | `!plan`, `!farm`, `!plant`, `!breed`, `!brew`, `!water`, `!bucket`, `!learned`, `!help` | One bot does it: a free one if there is one. |
 | `!crew` | Lists the bots and whether each is idle, busy or offline. |
 | `!all <command>` | Sends any command to every bot. |
@@ -352,6 +352,7 @@ e.g. `I died at -390 70 1310 in the overworld (Zyntharic was slain by Zombie).`
 | `!eat`                           | Eat now if hungry                             |
 | `!come`                          | Walk to you (chat only)                       |
 | `!deposit`                       | Put requested items in the configured chest   |
+| `!setchest [x y z\|clear]`        | Set the chest (or barrel) it unloads into: the one you're looking at (or the nearest to you, within 5 blocks), or the one at x y z. Remembered across restarts (in `memory/<bot>.chest.json`) and used instead of `"chest"` in config.json; `!setchest clear` goes back to that. Said to the crew, every bot uses it |
 | `!home`                          | Return to where it spawned                    |
 | `!say <text>`                    | Say something in chat                         |
 | `!help`                          | List commands                                 |
@@ -434,7 +435,7 @@ with its progress and what's still to place (what it has and what's in chests).
 | `workbenchRange`     | `64`          | Use a crafting table / furnace / brewing stand within this distance (seen or remembered) instead of making one |
 | `exploreDistance`    | `64`          | How far to wander when nothing is in range                        |
 | `maxExploreAttempts` | `8`           | Give up on an item after this many fruitless wanders              |
-| `chest`              | `null`        | `{ "x": 0, "y": 64, "z": 0 }`: where to unload when full / done   |
+| `chest`              | `null`        | `{ "x": 0, "y": 64, "z": 0 }`: where to unload when full / done (a chest or barrel; `!setchest` in game overrides it) |
 | `protectRadius`      | `0`           | Never dig within this many blocks of the spawn point or chest     |
 | `extraMineable`      | `[]`          | Extra block names it may mine besides natural ones                |
 | `hunt`               | `true`        | Allow hunting mobs for drops and food                             |
@@ -533,4 +534,5 @@ with its progress and what's still to place (what it has and what's in chests).
 | `lib/swimming.js`   | Water: air, swimming up, diving, getting out                |
 | `lib/climbing.js`   | Getting up: towers, tunnelling straight up                |
 | `lib/spin.js`       | Spinning round a player, spaced out with the rest of the crew |
+| `lib/chests.js`     | The unload chest set in game (`setchest`)                 |
 | `lib/accounts.js`   | Saved Microsoft logins: written safely, refreshed patiently |

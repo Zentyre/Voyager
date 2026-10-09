@@ -19,7 +19,7 @@ const { addresses } = require("./commands");
 const SPLIT = new Set(["get", "gather", "craft", "smelt"]); // divide the count
 const EVERYONE = new Set([
     "come", "stop", "quit", "status", "queue", "inv", "home", "guard", "bodyguard", "protect",
-    "eat", "sleep", "deposit", "give", "drop", "armor", "bow", "forget", "spin",
+    "eat", "sleep", "deposit", "give", "drop", "armor", "bow", "forget", "spin", "setchest",
 ]);
 // Everything else (plan, farm, plant, breed, brew, water, bucket, learned,
 // help) goes to one bot: an idle one if possible.

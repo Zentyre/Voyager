@@ -28,6 +28,8 @@ const { installClimbing } = require("./climbing");
 const { installSpin } = require("./spin");
 const { createProfiles } = require("./profiles");
 const { loginStorage } = require("./accounts");
+const { savedChest, saveChest } = require("./chests");
+const { Vec3 } = require("vec3");
 const { patchBot } = require("./compat");
 const { installModSupport } = require("./mods");
 const { addresses } = require("./commands");
@@ -87,6 +89,9 @@ function startBot(config, crew = null, reporter = null) {
 
 function createBot(config, crew, reporter) {
     const microsoft = config.auth === "microsoft";
+    // The unload chest: one set in game ("setchest") wins over config.json's.
+    const configChest = config.chest;
+    if (savedChest(config.username)) config.chest = savedChest(config.username);
     const bot = mineflayer.createBot({
         host: config.host,
         port: config.port,
@@ -201,6 +206,7 @@ function createBot(config, crew, reporter) {
         ctx.home = bot.entity.position.clone();
         ctx.equipArmor().catch(() => {});
         log(`Spawned at ${ctx.fmt(ctx.home)} on ${bot.version}${bot.username !== config.username ? ` as ${bot.username}` : ""}.`);
+        if (config.chest) log(`Unloading into the chest at ${config.chest.x} ${config.chest.y} ${config.chest.z}${config.chest !== configChest ? " (set with setchest)" : ""}.`);
         if (crew) crew.online(bot.username);
         if (ctx.queue.length > 0) runQueue();
         else if (!crew) log(`Nothing queued. Say '${config.commandPrefix}get <item> [count]' in chat.`);
@@ -455,6 +461,26 @@ function createBot(config, crew, reporter) {
         }
     }
 
+    // ---------- the unload chest ----------
+
+    const UNLOAD_INTO = /^(chest|trapped_chest|barrel)$/;
+    const containerIds = () => bot.registry.blocksArray.filter((b) => UNLOAD_INTO.test(b.name)).map((b) => b.id);
+
+    // The chest (or barrel) a player is looking at, from where they stand.
+    function chestLookedAt(player) {
+        if (!player?.position) return null;
+        const yaw = player.headYaw ?? player.yaw, pitch = player.pitch ?? 0;
+        const eye = player.position.offset(0, 1.62, 0);
+        const dir = new Vec3(-Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+        const block = bot.world.raycast(eye, dir, 6);
+        return block && UNLOAD_INTO.test(block.name) ? block.position : null;
+    }
+
+    function nearestChest(point) {
+        if (!point) return null;
+        return bot.findBlocks({ matching: containerIds(), maxDistance: 5, count: 1, point })[0] || null;
+    }
+
     // Hand things over: walk to the player and throw them. "all" is
     // everything it has: bag, hotbar, the armor it's wearing and the
     // off-hand too. A named item comes from the bag first, then off its body.
@@ -570,7 +596,7 @@ function createBot(config, crew, reporter) {
     const HELP = "Commands: " + [
         "get <item> [count]", "plan <item>", "farm", "plant <crop> [plots]", "breed <animal> [pairs]",
         "brew <potion> [count] [long|strong|splash]", "sleep", "water", "bucket", "armor [material]",
-        "guard [player]", "spin [player] [radius]", "bow [arrows]", "give [item|all] [count]",
+        "guard [player]", "spin [player] [radius]", "setchest [x y z|clear]", "bow [arrows]", "give [item|all] [count]",
         "learned", "forget", "stop", "status", "queue", "inv", "eat", "come", "deposit", "home", "say <text>", "quit",
         "profile [name]", "build <schematic> [x y z] [rotate 90|180|270] [clear]", "build list|materials|resume",
     ]
@@ -701,6 +727,33 @@ function createBot(config, crew, reporter) {
                 const name = Object.keys(bot.players).find((n) => n.toLowerCase() === typed.toLowerCase()) || typed;
                 if (name === bot.username) return say("I can't spin round myself.");
                 await runExclusive("spin", () => ctx.spin(name, radius), `Spinning round ${name}`);
+                break;
+            }
+            case "setchest": {
+                // setchest            the chest the player is looking at (or the nearest one to them)
+                // setchest x y z      that one
+                // setchest clear      back to config.json's
+                const sub = (args[0] || "").toLowerCase();
+                if (["clear", "off", "reset", "none"].includes(sub)) {
+                    saveChest(config.username, null);
+                    config.chest = configChest;
+                    return say(configChest ? `Back to the chest in config.json, at ${configChest.x} ${configChest.y} ${configChest.z}.` : "I've no chest to unload into now.");
+                }
+                const numbers = args.slice(0, 3).map(Number);
+                const player = requester ? bot.players[requester]?.entity : null;
+                const pos =
+                    args.length >= 3 && numbers.every(Number.isFinite)
+                        ? new Vec3(...numbers).floored()
+                        : chestLookedAt(player) || nearestChest(player?.position) || (!player && nearestChest(bot.entity.position));
+                if (!pos) {
+                    if (broadcast) return;
+                    return say(`I can't tell which chest you mean. Look at it (from within 5 blocks) and say ${config.commandPrefix}setchest, or give its x y z.`);
+                }
+                const block = bot.blockAt(pos);
+                if (block && !UNLOAD_INTO.test(block.name)) return say(`That's ${ctx.pretty(block.name)} at ${ctx.fmt(pos)}, not a chest or barrel.`);
+                config.chest = { x: pos.x, y: pos.y, z: pos.z };
+                saveChest(config.username, config.chest);
+                say(`I'll unload into the ${block ? ctx.pretty(block.name) : "chest"} at ${ctx.fmt(pos)}${block ? "" : " (I can't see that spot from here)"}.`);
                 break;
             }
             case "bow": {
