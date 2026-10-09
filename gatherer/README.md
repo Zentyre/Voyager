@@ -407,7 +407,10 @@ uploaded with the dashboard's Upload button).
 - **Placing:** bottom up, solid blocks before what hangs on them, each turned
   the way the schematic says: stairs, slabs, logs, doors, beds, trapdoors,
   torches, signs, chests, furnaces, pistons, buttons and so on. Blocks with
-  nothing next to them get a temporary dirt pillar, taken away afterwards.
+  nothing next to them (the edge of a roof, an overhang) are placed in mid-air:
+  it clicks the empty spot itself, which the game allows, with the facing and
+  halves still right. Only on a server that refuses that (an anti-cheat plugin)
+  does it fall back to a temporary dirt pillar, taken away afterwards.
 - **High up:** where it can't stand within reach (the top of a tall wall), it
   puts up a tower beside it and builds from the top, then breaks the tower
   on the way down and picks the blocks up again. It uses **scaffolding** when

@@ -532,6 +532,13 @@ function installBuilding(ctx) {
         return c;
     }
 
+    function airCursor(way) {
+        const c = cursorFor(way.face, way.cursor);
+        // keep the point just inside the block (the server checks it's on it)
+        c.y = Math.min(0.99, Math.max(0.01, c.y));
+        return c;
+    }
+
     async function lookFor(way) {
         let yaw = bot.entity.yaw;
         let pitch = 0;
@@ -552,7 +559,10 @@ function installBuilding(ctx) {
     async function clickPlace(ref, way) {
         bot.setControlState("sneak", true); // so clicking a chest or table never opens it
         try {
-            await bot._genericPlace(ref, DIRS[way.face], { forceLook: "ignore", delta: cursorFor(way.face, way.cursor), swingArm: "right" });
+            // In mid-air the spot itself is clicked: the point is on that block, so
+            // a face's high/low half reads the same and up/down sit inside it.
+            const delta = way.air ? airCursor(way) : cursorFor(way.face, way.cursor);
+            await bot._genericPlace(ref, DIRS[way.face], { forceLook: "ignore", delta, swingArm: "right" });
         } finally {
             bot.setControlState("sneak", false);
             if (bot.currentWindow) bot.closeWindow(bot.currentWindow);
@@ -621,7 +631,7 @@ function installBuilding(ctx) {
             : waysToPlace(t.want);
         const refFor = (w) => (w.self ? bot.blockAt(t.pos) : clickable(t.pos, w.face));
         const way = ways.find(refFor);
-        if (!way) return "later";
+        if (!way) return airPlace(t, ways);
 
         ctx.doing(`Placing ${ctx.pretty(t.want.name)} at ${ctx.fmt(t.pos)} (${job.done}/${job.targets.length})`);
         await getNear(t.pos);
@@ -641,8 +651,44 @@ function installBuilding(ctx) {
         return "later"; // facing the wrong way: the next pass takes it out and tries again
     }
 
-    // A block with nothing next to it to place against: put a temporary
-    // pillar of dirt (or cobblestone) under it, taken away afterwards.
+    // Nothing next to it to place against (the edge of a roof, say): click
+    // the empty spot itself. The game takes air as replaceable and puts the
+    // block right there, facing and halves as for a normal click (the same
+    // face and point on it), so no pillar is needed underneath. A server that
+    // won't have it (an anti-cheat plugin) gets the old way after three
+    // refusals: a pillar under it (scaffoldUnder).
+    async function airPlace(t, ways) {
+        if (job.airRefused >= 3) return "later";
+        const solid = (b) => b && b.boundingBox === "block";
+        ctx.doing(`Placing ${ctx.pretty(t.want.name)} in mid-air at ${ctx.fmt(t.pos)} (${job.done}/${job.targets.length})`);
+        await getNear(t.pos);
+        const spot = bot.blockAt(t.pos);
+        if (!spot || !(REPLACEABLE.test(spot.name) || spot.boundingBox === "empty") || !(await equip(t.item))) return "later";
+        const way = ways[0];
+        await lookFor(way);
+        t.tries++;
+        await clickPlace(spot, { ...way, air: true });
+        if (!(await waitForBlock(t.pos, (b) => b && b.name === t.want.name))) {
+            // only full blocks count against the server (a torch in mid-air fails anyway)
+            if (solid({ boundingBox: bot.registry.blocksByName[t.want.name]?.boundingBox })) {
+                t.tries--; // the server's no, not this block's fault: it gets its tries with a pillar
+                if (++job.airRefused === 3) ctx.log("The server won't let me place blocks in mid-air; putting a pillar under them instead.");
+                return "later";
+            }
+            return t.tries >= 3 ? "failed" : "later";
+        }
+        job.airRefused = 0;
+        if (matches(bot.blockAt(t.pos), t.want)) return "done";
+        if (t.tries >= 2) {
+            job.misfaced++;
+            return "done";
+        }
+        return "later";
+    }
+
+    // A block with nothing next to it to place against, on a server that
+    // won't take mid-air placing: put a temporary pillar of dirt (or
+    // cobblestone) under it, taken away afterwards.
     async function scaffoldUnder(t) {
         const filler = TOWER.find((n) => ctx.countItem(n) > 0);
         if (!filler) return false;
@@ -736,6 +782,7 @@ function installBuilding(ctx) {
         job = await prepare(options);
         job.scaffold = [];
         job.litter = [];
+        job.airRefused = 0;
         job.tower = null;
         job.towerFrom = Infinity;
         job.state = "starting";
