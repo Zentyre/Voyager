@@ -50,7 +50,6 @@ try {
 
 const ARMOR_PIECES = ["helmet", "chestplate", "leggings", "boots"];
 const WORKBENCHES = ["crafting_table", "furnace", "brewing_stand", "smoker", "blast_furnace"];
-const GEAR = /_(pickaxe|axe|shovel|hoe|sword|helmet|chestplate|leggings|boots)$|^(bow|shield|arrow|spectral_arrow|tipped_arrow|bucket|water_bucket)$/;
 
 // The server's Minecraft version, if the bot can speak it; otherwise the
 // newest version it can (which works when the server runs ViaVersion +
@@ -455,23 +454,49 @@ function createBot(config, crew, reporter) {
     }
 
     // Walk to a player and drop items for them.
+    // Hand things over: walk to the player and throw them. "all" is
+    // everything it has: bag, hotbar, the armor it's wearing and the
+    // off-hand too. A named item comes from the bag first, then off its body.
+    const everything = () => bot.inventory.slots.slice(1, 46).filter(Boolean); // crafting grid, armor, bag, hotbar, off-hand
+    const onBody = (item) => item.slot < 9 || item.slot === 45;
     async function give(player, what, count) {
         await ctx.goTo(player.position, 2, player.username);
-        ctx.doing(`Handing ${what === "all" ? "items" : ctx.pretty(what)} to ${player.username}`);
+        ctx.doing(`Handing ${what === "all" ? "everything" : ctx.pretty(what)} to ${player.username}`);
         await bot.lookAt(player.position.offset(0, 1.6, 0), true);
-        const items = bot.inventory
-            .items()
-            .filter((i) => (what && what !== "all" ? i.name === what : !GEAR.test(i.name)));
         let left = count;
         const given = {};
-        for (const item of items) {
-            if (left <= 0) break;
-            const n = Math.min(item.count, left);
-            await bot.toss(item.type, null, n);
-            given[item.name] = (given[item.name] || 0) + n;
-            left -= n;
+        ctx.handingOver = true; // don't put armor or a shield back on meanwhile
+        try {
+            // A few passes, in case something moved slots while throwing.
+            for (let pass = 0; pass < 3 && left > 0; pass++) {
+                const items = everything()
+                    .filter((i) => what === "all" || i.name === what)
+                    .sort((a, b) => onBody(a) - onBody(b));
+                if (!items.length) break;
+                for (const item of items) {
+                    if (left <= 0) break;
+                    if (bot.inventory.slots[item.slot] !== item) continue; // already gone or moved
+                    const n = Math.min(item.count, left);
+                    await throwSome(item, n);
+                    given[item.name] = (given[item.name] || 0) + n;
+                    left -= n;
+                }
+            }
+        } finally {
+            ctx.handingOver = false;
         }
         return given;
+    }
+
+    // Throw `n` of the stack in `item`'s slot (worn armor and the off-hand
+    // too, which bot.toss doesn't look in).
+    async function throwSome(item, n) {
+        if (n >= item.count) return bot.tossStack(item);
+        if (!onBody(item)) return bot.toss(item.type, null, n);
+        // Part of an off-hand stack: pick it up, drop one at a time, put the rest back.
+        await bot.clickWindow(item.slot, 0, 0);
+        for (let i = 0; i < n; i++) await bot.clickWindow(-999, 1, 0);
+        await bot.clickWindow(item.slot, 0, 0);
     }
 
     // ---------- building (builder profile) ----------
@@ -696,13 +721,13 @@ function createBot(config, crew, reporter) {
                 if (!player) return broadcast ? undefined : say(cantSee());
                 const what = args[0] || "all";
                 const count = args[1] ? parseInt(args[1], 10) : Infinity;
-                const has = what === "all" ? bot.inventory.items().some((i) => !GEAR.test(i.name)) : ctx.countItem(what) > 0;
-                if (!has) return broadcast ? undefined : say(`I don't have any ${what === "all" ? "items to give" : what}.`);
+                const has = everything().some((i) => what === "all" || i.name === what);
+                if (!has) return broadcast ? undefined : say(`I don't have ${what === "all" ? "anything to give" : `any ${what}`}.`);
                 await runExclusive("give", async () => {
                     const given = await give(player, what, count);
                     const list = Object.entries(given).map(([n, c]) => `${c} ${n}`).join(", ");
                     say(list ? `Here you go: ${list}.` : "Nothing to give.");
-                }, `Giving ${what === "all" ? "items" : ctx.pretty(what)} to ${requester}`);
+                }, `Giving ${what === "all" ? "everything" : ctx.pretty(what)} to ${requester}`);
                 break;
             }
             case "stop":

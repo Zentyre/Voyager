@@ -339,7 +339,7 @@ e.g. `I died at -390 70 1310 in the overworld (Zyntharic was slain by Zombie).`
 | `!water`                         | Place a water source next to it               |
 | `!bucket`                        | Get a filled water bucket                     |
 | `!guard [player]`                | Bodyguard a player (you, if no name). `!stop` dismisses it. Also `!bodyguard`, `!protect` |
-| `!give [item\|all] [count]`      | Walk to you and drop items (`all` = everything except its tools, armor, weapons and arrows) |
+| `!give [item\|all] [count]`      | Walk to you and drop items. `all` is everything it has: bag, hotbar, the armor it's wearing and its off-hand. A named item comes from the bag first, then off its body (`!give iron_chestplate` takes off the one it wears if it has no spare). `!drop` does the same |
 | `!bow [arrows]`                  | Get a bow and arrows (16 by default) to use in fights |
 | `!armor`                         | Put on the best armor it has and say what it's wearing |
 | `!armor <material>`              | Get and wear a full set: `leather`, `golden`, `iron` or `diamond` |

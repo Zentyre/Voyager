@@ -100,7 +100,7 @@ function installCombat(ctx) {
 
     // Wear the best armor we carry, and a shield in the off-hand.
     async function equipArmor() {
-        if (config.autoArmor === false) return;
+        if (config.autoArmor === false || ctx.handingOver) return;
         for (const slot of Object.values(ARMOR_SLOTS)) {
             const worn = armorInfo(bot.inventory.slots[bot.getEquipmentDestSlot(slot)]?.name);
             const best = bot.inventory
