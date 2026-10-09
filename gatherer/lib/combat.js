@@ -25,6 +25,10 @@ const ARMOR_RANK = ["leather", "golden", "chainmail", "turtle", "iron", "diamond
 //   bow  - shoot from a distance (only when carrying a bow and arrows)
 const STYLES = ["crit", "fast", "kite"];
 const RANGED = new Set(["skeleton", "stray", "bogged", "pillager", "witch", "blaze"]);
+// Melee reach, measured as the game does: from the eyes to the nearest point
+// of the mob's hitbox. A player gets 3; the server accepts up to 6 (3 plus 3
+// blocks of tolerance), so config.attackReach (default 5) lets the bot hit
+// from further than a mob can hit back.
 const REACH = 3.0;
 
 function armorInfo(name) {
@@ -37,6 +41,25 @@ function installCombat(ctx) {
     const { bot, config, kb, learn } = ctx;
     let shieldUp = false;
     let extinguishing = false;
+
+    // ---------- reach ----------
+
+    const attackReach = () => Math.min(5.5, Math.max(2, Number(config.attackReach) || REACH));
+    // From the bot's eyes to the nearest point of the mob's hitbox.
+    function reachTo(mob) {
+        const eye = bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0);
+        const w = (mob.width ?? 0.6) / 2, h = mob.height ?? 1.8, p = mob.position;
+        const near = new Vec3(
+            Math.max(p.x - w, Math.min(eye.x, p.x + w)),
+            Math.max(p.y, Math.min(eye.y, p.y + h)),
+            Math.max(p.z - w, Math.min(eye.z, p.z + w))
+        );
+        return eye.distanceTo(near);
+    }
+    const inReach = (mob, spare = 0) => reachTo(mob) <= attackReach() + spare;
+    // How far off to keep while fighting: close enough to hit, as far as that
+    // allows, so it hits first (a zombie reaches about 2 blocks).
+    const fightDistance = (style) => Math.max(style === "kite" ? 2.5 : 1.5, attackReach() - (style === "kite" ? 1 : 1.5));
 
     // ---------- who can get at us ----------
 
@@ -164,10 +187,11 @@ function installCombat(ctx) {
         ctx.target = mob;
         const weapon = await equipWeapon();
         const cooldownMs = 1000 / weapon.speed;
-        const follow = new goals.GoalFollow(mob, style === "kite" ? 2.5 : 1.5);
+        const follow = new goals.GoalFollow(mob, fightDistance(style));
         bot.pathfinder.setGoal(follow, true);
         const start = Date.now();
         let lastSwing = 0;
+        let backing = false;
         try {
             while (mob.isValid && bot.entities[mob.id]) {
                 ctx.checkStop();
@@ -178,13 +202,13 @@ function installCombat(ctx) {
                 if (defend) {
                     if (canSee(mob)) seen = Date.now();
                     // In reach, or getting closer: it can be got to.
-                    if (distance <= REACH + 0.5 || distance < closest - 0.5) {
+                    if (inReach(mob, 0.5) || distance < closest - 0.5) {
                         closest = distance;
                         closer = Date.now();
                     }
                     if (!hurtMe(mob, 5000)) {
                         if (Date.now() - seen > 3000) throw new Error(`the ${mob.name} went out of sight; leaving it`);
-                        if (distance > REACH + 0.5 && Date.now() - closer > 6000) throw new Error(`can't get to the ${mob.name} without digging; leaving it`);
+                        if (!inReach(mob, 0.5) && Date.now() - closer > 6000) throw new Error(`can't get to the ${mob.name} without digging; leaving it`);
                     }
                 }
                 if (isHostile(mob) && bot.health <= config.fleeHealth) {
@@ -194,12 +218,35 @@ function installCombat(ctx) {
                 }
 
                 // Block arrows while closing in on ranged mobs.
-                raiseShield(distance > REACH + 0.5 && (RANGED.has(mob.name) || rangedNearby()));
+                raiseShield(!inReach(mob, 0.5) && (RANGED.has(mob.name) || rangedNearby()));
 
                 // Going for crits: never throw a plain swing mid-jump.
                 const airborne = style === "crit" && !bot.entity.onGround && !bot.entity.isInWater;
-                if (!airborne && distance <= REACH + 0.2 && Date.now() - lastSwing >= cooldownMs) {
+                // The mob closer than it needs to be: step back, facing it, so
+                // it can't hit first (if there's safe ground behind). While
+                // the weapon recharges; and for a crit (a jump: the mob walks
+                // in meanwhile) until it's back at a comfortable distance.
+                const keepOff = !airborne && isHostile(mob) && distance < fightDistance(style) - 1 && (style === "crit" || Date.now() - lastSwing < cooldownMs) && room(mob);
+                if (keepOff && !backing) {
+                    backing = true;
+                    bot.pathfinder.setGoal(null);
+                } else if (!keepOff && backing) {
+                    backing = false;
+                    bot.setControlState("back", false);
+                    bot.pathfinder.setGoal(follow, true);
+                }
+                if (backing) {
+                    await bot.lookAt(aimPoint(mob), true);
+                    bot.setControlState("back", true);
+                }
+
+                // Only what it can see: no hitting through a wall.
+                if (!airborne && !backing && inReach(mob) && Date.now() - lastSwing >= cooldownMs && canSee(mob)) {
                     raiseShield(false);
+                    if (backing) {
+                        backing = false;
+                        bot.setControlState("back", false);
+                    }
                     if (style === "crit" && !bot.entity.isInWater) {
                         await critSwing(mob);
                         bot.pathfinder.setGoal(follow, true);
@@ -228,6 +275,24 @@ function installCombat(ctx) {
         }
     }
 
+    // Safe ground for two steps straight back from the mob.
+    function room(mob) {
+        const me = bot.entity.position;
+        const away = me.minus(mob.position);
+        away.y = 0;
+        const n = away.norm();
+        if (n < 0.01) return false;
+        const dir = away.scaled(1 / n);
+        for (let i = 1; i <= 2; i++) {
+            const p = me.plus(dir.scaled(i)).floored();
+            const feet = bot.blockAt(p), head = bot.blockAt(p.offset(0, 1, 0)), floor = bot.blockAt(p.offset(0, -1, 0));
+            if (!feet || !head || !floor) return false;
+            if (feet.boundingBox !== "empty" || head.boundingBox !== "empty" || floor.boundingBox !== "block") return false;
+            if (/lava|fire|magma|cactus|sweet_berry/.test(floor.name + feet.name)) return false;
+        }
+        return true;
+    }
+
     function aimPoint(mob) {
         return mob.position.offset(0, (mob.height || 1.6) * 0.6, 0);
     }
@@ -251,7 +316,7 @@ function installCombat(ctx) {
         }
         // The server decides from our position updates, so let it see us drop first.
         if (!bot.entity.onGround) await bot.waitForTicks(1);
-        if (!mob.isValid || mob.position.distanceTo(bot.entity.position) > REACH + 0.5) return;
+        if (!mob.isValid || !inReach(mob, 0.3)) return;
         await bot.lookAt(aimPoint(mob), true);
         bot.attack(mob);
     }
@@ -286,7 +351,7 @@ function installCombat(ctx) {
                 if (distance >= safe) break;
                 // Too close to get away (it dropped into the hole the bot is in,
                 // say): hit it while still trying to leave; knockback buys time.
-                if (distance < REACH && Date.now() - lastHit > 500) {
+                if (inReach(mob) && canSee(mob) && Date.now() - lastHit > 500) {
                     lastHit = Date.now();
                     await bot.lookAt(aimPoint(mob), true);
                     bot.attack(mob);
@@ -498,6 +563,8 @@ function installCombat(ctx) {
     Object.assign(ctx, {
         canSee,
         hurtMe,
+        reachTo,
+        inReach,
         isHostile,
         offLeash,
         equipWeapon,

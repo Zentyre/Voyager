@@ -25,6 +25,7 @@ const DEFAULTS = {
     hunt: true,
     defend: true,
     defendRadius: 8,
+    attackReach: 5, // melee reach, eyes to the mob's hitbox (a player gets 3; servers accept up to 6)
     fleeHealth: 6,
     eatBelow: 14,
     findFoodBelow: 8,
