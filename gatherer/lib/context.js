@@ -125,13 +125,16 @@ function createContext(bot, config) {
 
     // A crafting table / furnace nearby, or one we placed earlier within reach
     // of a short walk.
+    // Not one with a creeper (that it ran from) standing by it: it makes
+    // another instead.
     ctx.findStation = (name) => {
         const id = bot.registry.blocksByName[name].id;
-        const near = bot.findBlock({ matching: id, maxDistance: config.stationRadius });
-        if (near) return near;
+        const usable = (pos) => !ctx.lurkerNear?.(pos);
+        const near = bot.findBlocks({ matching: id, maxDistance: config.stationRadius, count: 8 }).find(usable);
+        if (near) return bot.blockAt(near);
         const me = bot.entity.position;
         const placed = ctx.placedStations
-            .filter((pos) => pos.distanceTo(me) <= config.stationRadius * 3)
+            .filter((pos) => pos.distanceTo(me) <= config.stationRadius * 3 && usable(pos))
             .map((pos) => bot.blockAt(pos))
             .filter((block) => block?.type === id)
             .sort((a, b) => a.position.distanceTo(me) - b.position.distanceTo(me));
@@ -152,6 +155,7 @@ function createContext(bot, config) {
     ctx.stopCurrentAction = () => {
         ctx.interrupts++;
         bot.pathfinder.setGoal(null);
+        if (bot.targetDigBlock) bot.stopDigging(); // half a block dug is no reason to stay
         // cancelTask waits for the collection to wind down; don't stack waits
         if (!ctx.cancelling) {
             ctx.cancelling = true;

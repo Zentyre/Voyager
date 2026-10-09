@@ -681,6 +681,20 @@ function installActions(ctx) {
 
     // ---------- crafting ----------
 
+    // Walk to a crafting table or furnace. A creeper it ran from standing by
+    // it (or turning up while it kept away) means starting over: the plan
+    // then uses, or puts down, another one away from it.
+    async function goToStation(block, what) {
+        await ctx.act(async () => {
+            const lurker = ctx.lurkerNear?.(block.position);
+            if (lurker) {
+                ctx.log(`A ${ctx.pretty(lurker.name)} is by ${what} at ${ctx.fmt(block.position)}; using another one.`);
+                throw new ctx.Retry();
+            }
+            await ctx.goTo(block.position, 2, what);
+        });
+    }
+
     async function craft(name, target, plan, seen) {
         const item = bot.registry.itemsByName[name];
         const perCraft = plan.recipe.result.count;
@@ -703,7 +717,7 @@ function installActions(ctx) {
         let table = null;
         if (plan.recipe.requiresTable) {
             table = await ensureStation("crafting_table", seen);
-            await ctx.act(() => ctx.goTo(table.position, 2, "the crafting table"));
+            await goToStation(table, "the crafting table");
         }
         // The variant that was planned (cobblestone, not the cobbled deepslate
         // that happens to be in the bag for something else), if it's craftable.
@@ -783,7 +797,7 @@ function installActions(ctx) {
         ctx.doing(`Getting fuel to smelt ${ctx.pretty(input)}`);
         await ensureFuel(amount, input, seen);
         await obtain(input, amount, seen); // planks for fuel may have used up logs
-        await ctx.act(() => ctx.goTo(furnaceBlock.position, 2, "the furnace"));
+        await goToStation(furnaceBlock, "the furnace");
         ctx.doing("Loading the furnace");
 
         let furnace = await bot.openFurnace(furnaceBlock);
@@ -812,7 +826,8 @@ function installActions(ctx) {
                 if (ctx.threatNearby()) {
                     furnace.close();
                     await ctx.guard();
-                    await ctx.act(() => ctx.goTo(furnaceBlock.position, 2, "the furnace"));
+                    // (what's in it stays there if a creeper keeps us away)
+                    await goToStation(furnaceBlock, "the furnace");
                     furnace = await bot.openFurnace(furnaceBlock);
                 }
                 if (furnace.outputItem()) {
@@ -830,7 +845,7 @@ function installActions(ctx) {
                     continue;
                 }
                 if (Date.now() - lastProgress > 15000) throw new Error(`furnace stopped making ${name}`);
-                await ctx.wait(1000);
+                for (let i = 0; i < 4 && !ctx.threatNearby(); i++) await ctx.wait(250);
             }
             // Leave nothing behind in the furnace that we put in.
             if (furnace.inputItem()) await furnace.takeInput().catch(() => {});

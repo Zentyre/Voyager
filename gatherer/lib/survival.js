@@ -2,6 +2,7 @@
 // (finding food if there is none), and sleep through the night.
 
 const { goals } = require("mineflayer-pathfinder");
+const { Vec3 } = require("vec3");
 
 const GOOD_IN_A_PINCH = ["enchanted_golden_apple", "golden_apple"];
 
@@ -13,6 +14,8 @@ function installSurvival(ctx) {
     let bedtime = false; // anywhere inside sleep(), including fetching a bed
     let sleepRetryAt = 0;
     const ignoreUntil = new Map(); // entity id -> timestamp
+    const waitedOut = new WeakSet(); // lurkers already waited on once
+    const shotAt = new WeakMap(); // lurker -> times it tried shooting it
 
     function inDanger() {
         return ["survival", "adventure"].includes(bot.game?.gameMode);
@@ -49,6 +52,33 @@ function installSurvival(ctx) {
         const me = bot.entity.position;
         return Object.values(bot.entities).find((e) => ctx.ranFrom?.(e) && e.isValid && e.position.distanceTo(me) < 24);
     }
+
+    // A mob we ran from (a creeper) that would come for the bot again if it
+    // went to `pos`: there, a creeper would see it (16 blocks), or the way
+    // there passes it. Creepers don't burn in the day, so one standing by the
+    // furnace can stay there for good.
+    ctx.lurkerNear = (pos) => {
+        const me = bot.entity.position;
+        return Object.values(bot.entities).find(
+            (e) => ctx.ranFrom?.(e) && e.isValid && e.position && (e.position.distanceTo(pos) < 16 || fromLine(e.position, me, pos) < 8)
+        );
+    };
+    // How far `p` is from the straight line from `a` to `b`.
+    function fromLine(p, a, b) {
+        const ab = b.minus(a);
+        const len = ab.dot(ab);
+        const t = len > 0 ? Math.max(0, Math.min(1, p.minus(a).dot(ab) / len)) : 0;
+        return p.distanceTo(a.plus(ab.scaled(t)));
+    }
+    const goto = bot.pathfinder.goto.bind(bot.pathfinder);
+    bot.pathfinder.goto = (goal, ...rest) => {
+        const g = goal?.pos ?? goal;
+        if (Number.isFinite(g?.x) && Number.isFinite(g?.z)) {
+            const lurker = ctx.lurkerNear(new Vec3(g.x, Number.isFinite(g.y) ? g.y : bot.entity.position.y, g.z));
+            if (lurker) return Promise.reject(new Error(`a ${ctx.pretty(lurker.name)} is waiting by there`));
+        }
+        return goto(goal, ...rest);
+    };
 
     ctx.threatNearby = () =>
         config.defend !== false && Boolean(bot.entity) && inDanger() && Boolean(nearestThreat());
@@ -226,7 +256,7 @@ function installSurvival(ctx) {
         await ctx.breathe?.(); // air first
         await ctx.equipArmor();
         await ctx.extinguish();
-        const waitUntil = Date.now() + 60000;
+        const waitUntil = Date.now() + 10000;
         for (;;) {
             for (let i = 0; i < 8 && ctx.threatNearby(); i++) {
                 const mob = nearestThreat();
@@ -241,10 +271,23 @@ function installSurvival(ctx) {
                 }
             }
             // Something we ran from still about (a creeper by the work): keep
-            // away a while for it to wander off, instead of walking straight
-            // back to it and running again. Only mid-job; idle, there's no need.
-            const lurker = ctx.busy && Date.now() < waitUntil && lurking();
-            if (!lurker) break;
+            // away a few seconds for it to lose interest, instead of walking
+            // straight back to it and running again; with a bow, shoot it from
+            // here. Only mid-job; idle, there's no need. After that the job goes
+            // on round it (it won't go near: lurkerNear).
+            const lurker = ctx.busy && lurking();
+            if (lurker && ctx.hasBow?.() && ctx.canSee(lurker) && (shotAt.get(lurker) || 0) < 2) {
+                shotAt.set(lurker, (shotAt.get(lurker) || 0) + 1);
+                fighting = true;
+                try {
+                    await ctx.fight(lurker, { maxDistance: 32 });
+                } finally {
+                    fighting = false;
+                }
+                continue;
+            }
+            if (!lurker || Date.now() >= waitUntil || waitedOut.has(lurker)) break;
+            if (Date.now() + 1000 >= waitUntil) waitedOut.add(lurker); // once is enough
             await ctx.during(`Keeping away from the ${ctx.pretty(lurker.name)}`, () => ctx.wait(1000));
             ctx.checkStop();
         }
@@ -258,7 +301,8 @@ function installSurvival(ctx) {
     let idleGuard = false;
     bot.on("physicsTick", () => {
         ticks++;
-        if (ticks % 10 !== 0 || fighting || sleeping) return;
+        // Five times a second: a creeper closes 3 blocks in a second.
+        if (ticks % 4 !== 0 || fighting || sleeping) return;
         if (ctx.onFire()) ctx.extinguish().catch(() => {});
         if (ctx.busy) {
             if (ctx.threatNearby()) ctx.stopCurrentAction();
