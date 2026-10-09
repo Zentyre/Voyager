@@ -2,7 +2,8 @@
 //
 // - The pathfinder's 1x1 tower (jump, put a block under itself) placed the
 //   block as soon as the jump started, while the bot was still in the way,
-//   and servers refuse that. Placing now waits for the top of the jump, so
+//   and servers refuse that. Placing now waits for the top of the jump, and
+//   lands on the block without waiting for the server (see placeBlock), so
 //   towers are back on and the pathfinder can choose them.
 // - Its costs are about time (one is roughly a block walked), so whether to
 //   dig a staircase, put blocks down, or walk round is whichever is quicker.
@@ -24,18 +25,90 @@ function installClimbing(ctx, movements) {
     movements.allow1by1towers = true;
     movements.placeCost = 1.5;
 
-    // A block placed where the bot is, mid-jump: wait until its feet are clear.
+    // A block put under itself mid-jump (a tower step): wait until its feet
+    // are clear of the spot, then put the block in its own world straight
+    // away, as the game does, so it lands on it. Waiting for the server's
+    // answer instead, it had dropped back into that space by the time the
+    // block arrived (on a server with any lag): standing inside the block,
+    // it broke it and started again, and never got anywhere. If the server
+    // says no, its answer takes the block back out and the bot drops (and
+    // the pathfinder, finding itself short of the step, plans again).
     const placeBlock = bot.placeBlock.bind(bot);
     bot.placeBlock = async (ref, face) => {
         const spot = ref.position.plus(face);
-        if (!bot.entity.onGround && inTheWay(spot)) {
-            await bot.lookAt(ref.position.offset(0.5 + face.x * 0.5, 0.5 + face.y * 0.5, 0.5 + face.z * 0.5), true);
-            const start = Date.now();
-            while (inTheWay(spot) && !bot.entity.onGround && Date.now() - start < 1000) await bot.waitForTicks(1);
-            if (inTheWay(spot)) throw new Error("I'm in the way of that block");
-        }
-        return placeBlock(ref, face);
+        if (!towerStep(spot)) return placeBlock(ref, face);
+        if (inTheWay(spot)) await jumpClear(spot);
+        await bot.lookAt(ref.position.offset(0.5 + face.x * 0.5, 0.5 + face.y * 0.5, 0.5 + face.z * 0.5), true);
+        const block = bot.registry.blocksByName[bot.heldItem?.name];
+        const before = bot.blockAt(spot);
+        if (!block || !before || before.boundingBox !== "empty") return placeBlock(ref, face);
+        bot.world.setBlockStateId(spot, block.defaultState);
+        watchForRefusal(spot, block);
+        // Don't wait for the answer (the block already shows, so mineflayer
+        // can't tell a yes from no answer); a no puts the block back to air.
+        placeBlock(ref, face).catch(() => {});
+        await bot.waitForTicks(2); // sent
     };
+
+    // Jump (if it isn't already: the item can take a moment to get into its
+    // hand, by which time it's landed again), until its feet are above the spot.
+    async function jumpClear(spot) {
+        const start = Date.now();
+        bot.setControlState("jump", true);
+        try {
+            while (inTheWay(spot) && Date.now() - start < 1500) await bot.waitForTicks(1);
+        } finally {
+            if (!bot.pathfinder.isMoving()) bot.setControlState("jump", false);
+        }
+        if (inTheWay(spot)) throw new Error("I'm in the way of that block (no room to jump?)");
+    }
+
+    // A server that keeps saying no to towering (a plugin, a protected area):
+    // after three in a row, stop planning towers for a minute and dig instead,
+    // rather than jumping on the spot for ever.
+    let refusals = 0;
+    let towersBackAt = 0;
+    function watchForRefusal(spot, block) {
+        const key = `blockUpdate:${spot}`;
+        const onUpdate = (oldBlock, newBlock) => {
+            if (newBlock?.type === block.id || bot.targetDigBlock?.position?.equals(spot)) return;
+            done();
+            if (++refusals < 3) return;
+            refusals = 0;
+            movements.allow1by1towers = false;
+            towersBackAt = Date.now() + 60000;
+            ctx.log("The server won't let me tower up here; climbing other ways for a minute.");
+        };
+        const timer = setTimeout(() => {
+            done();
+            refusals = 0;
+        }, 2000);
+        const done = () => {
+            clearTimeout(timer);
+            bot.removeListener(key, onUpdate);
+        };
+        bot.on(key, onUpdate);
+    }
+    bot.on("physicsTick", () => {
+        if (towersBackAt && Date.now() > towersBackAt) {
+            towersBackAt = 0;
+            movements.allow1by1towers = true;
+        }
+    });
+
+    // A block where the bot's feet are, or just under it in mid-jump (not
+    // one beside and below it: bridging, at the edge of its block).
+    function towerStep(spot) {
+        if (!overColumn(spot)) return false;
+        const feet = Math.floor(bot.entity.position.y + 0.01);
+        return feet === spot.y || (!bot.entity.onGround && feet === spot.y + 1);
+    }
+
+    // Is the bot over that block's column?
+    function overColumn(spot) {
+        const p = bot.entity.position;
+        return p.x + 0.3 > spot.x && p.x - 0.3 < spot.x + 1 && p.z + 0.3 > spot.z && p.z - 0.3 < spot.z + 1;
+    }
 
     // Would a block at `spot` overlap the bot (with a little to spare above)?
     function inTheWay(spot) {
