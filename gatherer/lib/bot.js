@@ -26,6 +26,7 @@ const { installBuilding } = require("./building");
 const { installSwimming, addWaterExits } = require("./swimming");
 const { installClimbing } = require("./climbing");
 const { installUnstuck } = require("./unstuck");
+const { installSpread } = require("./spread");
 const { installSpin } = require("./spin");
 const { installSprintJump } = require("./sprinting");
 const { createProfiles } = require("./profiles");
@@ -160,6 +161,7 @@ function createBot(config, crew, reporter) {
         installBodyguard(ctx);
         installBuilding(ctx);
         installSpin(ctx);
+        installSpread(ctx);
         ctx.profiles = createProfiles(ctx);
         if (ctx.profiles.name !== "default") log(`Profile: ${ctx.profiles.name}.`);
 
@@ -293,6 +295,7 @@ function createBot(config, crew, reporter) {
                 ctx.replyTo = replyTo; // a task asked for by /msg reports by /msg
                 ctx.current = { ...task, startCount: ctx.countItem(task.item), deposited: 0 };
                 ctx.ahead = needsAhead();
+                ctx.joinTeam?.(task.team);
                 try {
                     await runTask(ctx.current);
                 } catch (err) {
@@ -301,6 +304,7 @@ function createBot(config, crew, reporter) {
                 } finally {
                     ctx.current = null;
                     ctx.ahead = null;
+                    ctx.leaveTeam?.();
                 }
             }
             if (config.chest) await ctx.safely(ctx.depositAll);
@@ -611,7 +615,8 @@ function createBot(config, crew, reporter) {
 
     // `broadcast` is true when the whole crew got this command: then a bot
     // with nothing to contribute stays quiet instead of everyone saying so.
-    async function handleCommand(text, fromPlayer, { broadcast = false, whisper = false } = {}) {
+    // `team`: a job split between the crew (see spread.js).
+    async function handleCommand(text, fromPlayer, { broadcast = false, whisper = false, team = null } = {}) {
         if (!ctx.planner) return; // not spawned yet
         // Asked by /msg: answer by /msg.
         const privately = whisper && fromPlayer;
@@ -634,7 +639,7 @@ function createBot(config, crew, reporter) {
                 if (!bot.registry.itemsByName[item]) return say(`There's no item called ${item}.`);
                 const count = parseInt(args[1] || "1", 10);
                 if (!(count > 0)) return;
-                ctx.queue.push({ item, count, replyTo: privately ? fromPlayer : null });
+                ctx.queue.push({ item, count, replyTo: privately ? fromPlayer : null, team });
                 say(`Queued ${count} ${item}.`);
                 runQueue();
                 break;
@@ -946,7 +951,7 @@ function createBot(config, crew, reporter) {
 
     if (crew) {
         // Commands handed out by the crew coordinator.
-        crew.onCommand(({ text, from, broadcast }) => run(text, from, { broadcast }));
+        crew.onCommand(({ text, from, broadcast, team }) => run(text, from, { broadcast, team }));
         crew.onSay((text) => say(text));
         crew.onQuit(() => {
             ctx.learn?.save();

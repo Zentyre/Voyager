@@ -118,8 +118,9 @@ function installActions(ctx) {
                 const w = ctx.waterOver?.(p) || 0;
                 return w ? 6 + 3 * w : 0;
             };
+            // In a crew: its own side of a shared job, and not right by another bot (spread.js).
             const effort = (p) =>
-                p.distanceTo(me) + 3 * Math.max(0, p.y - me.y - 2) + (below === null ? 0 : 6 * Math.max(0, me.y - p.y - below)) + wetness(p);
+                p.distanceTo(me) + 3 * Math.max(0, p.y - me.y - 2) + (below === null ? 0 : 6 * Math.max(0, me.y - p.y - below)) + wetness(p) + (ctx.spreadCost?.(p) || 0);
             positions.sort((a, b) => effort(a) - effort(b));
             if (lastExplore) {
                 learn.reward(lastExplore.context, lastExplore.arm, positions.length > 0 ? 1 : 0);
@@ -652,9 +653,12 @@ function installActions(ctx) {
     // Returns the direction choice so the caller can score it.
     async function explore(kind = "block", names = [], usable = null) {
         const pos = bot.entity.position;
+        // (in a crew, on its own side first: they all remember the same places)
         const remembered = learn
             .recall(kind, names, pos)
-            .filter((spot) => spot.distance > config.searchRadius * 0.6);
+            .filter((spot) => spot.distance > config.searchRadius * 0.6)
+            .map((spot) => ({ ...spot, cost: spot.distance + (ctx.spreadCost?.(spot) || 0) }))
+            .sort((a, b) => a.cost - b.cost);
         if (remembered.length) {
             const spot = remembered[0];
             ctx.log(`Heading to where I saw ${spot.name} before (${spot.x} ${spot.z}).`);
@@ -678,9 +682,11 @@ function installActions(ctx) {
             );
         };
         const safe = COMPASS.filter((arm) => learn.dangerAt(target(arm)) < 3);
-        // In a crew, leave directions another bot is already exploring.
+        // In a crew, leave directions another bot is already exploring; on a
+        // shared job, its own side of the compass first (spread.js).
         const free = safe.filter((arm) => !ctx.crew?.claimedByOther(`explore:${context}:${arm}`));
-        const arm = learn.choose(context, free.length ? free : safe.length ? safe : COMPASS);
+        const mine = free.filter((arm) => ctx.headingOnMySide?.((COMPASS.indexOf(arm) * Math.PI) / 4) ?? true);
+        const arm = learn.choose(context, mine.length ? mine : free.length ? free : safe.length ? safe : COMPASS);
         ctx.crew?.claim(`explore:${context}:${arm}`, 90000);
         const dest = target(arm);
         const looking = names.length ? ` for ${names.slice(0, 3).map(ctx.pretty).join(" / ")}` : "";
@@ -972,7 +978,8 @@ function installActions(ctx) {
                 mobs,
                 config.searchRadius,
                 gaveUpOn,
-                (e) => ctx.huntable(e) && !ctx.crew?.claimedByOther(`mob:${e.id}`)
+                (e) => ctx.huntable(e) && !ctx.crew?.claimedByOther(`mob:${e.id}`),
+                (e) => ctx.spreadCost?.(e.position) || 0 // (its own side, in a crew)
             );
             const mob = findMob();
             if (lastExplore) {
@@ -1005,12 +1012,14 @@ function installActions(ctx) {
         }
     }
 
-    function nearestEntity(names, radius, exclude = new Set(), allowed = () => true) {
+    // `extra`: what going for one costs on top of the walk (in blocks).
+    function nearestEntity(names, radius, exclude = new Set(), allowed = () => true, extra = () => 0) {
         const pos = bot.entity.position;
+        const cost = (e) => e.position.distanceTo(pos) + extra(e);
         return Object.values(bot.entities)
             .filter((e) => names.includes(e.name) && !exclude.has(e.id) && allowed(e))
             .filter((e) => e.position.distanceTo(pos) <= radius)
-            .sort((a, b) => a.position.distanceTo(pos) - b.position.distanceTo(pos))[0];
+            .sort((a, b) => cost(a) - cost(b))[0];
     }
 
     // Walk over dropped items (optionally only `name`) lying nearby.

@@ -215,7 +215,7 @@ listens:
 
 | Command | What the crew does |
 |---------|--------------------|
-| `!get <item> <count>` (also gather/craft/smelt) | Splits the count between the bots that are free (all bots if none are free). `!get oak_log 64` with two idle bots → 32 each. |
+| `!get <item> <count>` (also gather/craft/smelt) | Splits the count between the bots that are free (all bots if none are free), and sends each a different way: `!get oak_log 64` with two idle bots → 32 each, one to the north side and one to the south ("Splitting 64 oak_log: Alpha 32 (north), Bravo 32 (south)"); four bots take north, east, south and west. |
 | `!come`, `!stop`, `!quit`, `!status`, `!inv`, `!home`, `!guard`, `!spin`, `!setchest`, `!eat`, `!sleep`, `!deposit`, `!give`, `!armor`, `!bow`, `!forget` | Every bot does it: e.g. `!guard` gives you a squad of bodyguards, `!give oak_log` has each bot bring you its logs. Bots with nothing to add stay quiet. |
 | `!plan`, `!farm`, `!plant`, `!breed`, `!brew`, `!water`, `!bucket`, `!learned`, `!help` | One bot does it: a free one if there is one. |
 | `!crew` | Lists the bots and whether each is idle, busy or offline. |
@@ -227,8 +227,13 @@ While working together they:
   aim corrections, danger spots and unreachable blocks all reach every bot as
   they happen, so iron one bot finds is known to all.
 - **Don't get in each other's way.** Each bot claims the block, crop or mob it's
-  going for, and the others pick a different one.
-- **Spread out when exploring.** Each bot takes a different direction.
+  going for, and the others pick a different one, away from it (anything within
+  10 blocks of where another bot is going counts as 30 blocks further).
+- **Spread out on a shared job.** Each takes its own side of the compass from
+  where it started and goes for the nearest there, middle of its side first.
+  Something on another bot's side counts as at least 40 blocks further, so it
+  only goes there when its own side is much further or has none. Exploring and
+  heading back to remembered places, it takes its own side first too.
 - **Leave each other alone.** Bots ignore each other's chat and never treat a
   crewmate as an attacker.
 
@@ -565,6 +570,7 @@ with its progress and what's still to place (what it has and what's in chests).
 | `lib/config.js`     | Defaults, config file, per-bot settings                   |
 | `lib/bot.js`        | One bot: connection, task queue, commands                 |
 | `lib/crew.js`       | Crew coordinator (main thread) and its link to each bot   |
+| `lib/spread.js`     | Each bot of a shared job to its own side of the compass   |
 | `lib/crew-worker.js`| Worker-thread entry point for a crew member               |
 | `lib/dashboard.js`  | Web dashboard server (status stream, commands, start/stop) |
 | `lib/updater.js`    | Dashboard Update/Restart (git pull, npm install)          |

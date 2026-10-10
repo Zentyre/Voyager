@@ -8,12 +8,14 @@
 // bot, depending on the command. Bots also:
 //   - share everything they learn (places, timings, fighting styles, danger),
 //   - claim the block or mob they're going for so others pick a different one,
-//   - spread out when exploring.
+//   - spread out on a shared job: each its own side of the compass
+//     (spread.js), and when exploring.
 
 const path = require("path");
 const readline = require("readline");
 const { Worker } = require("worker_threads");
 const { addresses } = require("./commands");
+const { headingFor, compassName } = require("./spread");
 
 // How each unaddressed command is handed out.
 const SPLIT = new Set(["get", "gather", "craft", "smelt"]); // divide the count
@@ -113,10 +115,13 @@ function startCrew(configs, { manager = false } = {}) {
             const helpers = team.slice(0, Math.min(total, team.length));
             const base = Math.floor(total / helpers.length);
             let extra = total % helpers.length;
-            const plan = helpers.map((m) => {
+            // Each its own side (see spread.js), so they don't all go to the same spot.
+            const names = helpers.map((m) => m.name);
+            const plan = helpers.map((m, index) => {
                 const share = base + (extra-- > 0 ? 1 : 0);
-                post(m, { type: "command", text: `get ${args[0]} ${share}`, from });
-                return `${m.name} ${share}`;
+                const team = helpers.length > 1 ? { names, index, size: helpers.length } : null;
+                post(m, { type: "command", text: `get ${args[0]} ${share}`, from, team });
+                return helpers.length > 1 ? `${m.name} ${share} (${compassName(headingFor(index, helpers.length))})` : `${m.name} ${share}`;
             });
             if (helpers.length > 1) tell(`Splitting ${total} ${args[0]}: ${plan.join(", ")}.`);
             return;
@@ -410,6 +415,11 @@ function createCrewClient(port, { config, names }) {
             const until = Date.now() + ms;
             claims.set(key, { owner: me, until });
             port.postMessage({ type: "claim", key, owner: me, until });
+        },
+        // The claims starting with `prefix` still in force: [{ key, owner }].
+        claimed(prefix) {
+            const now = Date.now();
+            return [...claims].filter(([k, c]) => k.startsWith(prefix) && c.until > now).map(([key, c]) => ({ key, owner: c.owner }));
         },
         // Who holds a claim starting with `prefix` (themselves included).
         holders(prefix) {
