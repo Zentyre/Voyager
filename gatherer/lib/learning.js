@@ -173,7 +173,7 @@ function createLearning(ctx) {
         const seen = new Map();
         for (const pos of bot.findBlocks({ matching: ids, maxDistance: config.searchRadius, count: 300 })) {
             const name = bot.blockAt(pos)?.name;
-            if (!name || ctx.tooDeepToDive?.(pos)) continue; // too far under water to fetch
+            if (!name || ctx.cantDiveFor?.(pos)) continue; // under water it can't fetch from
             const key = name + "|" + chunkKey(pos);
             const s = seen.get(key) || { name, pos, count: 0 };
             s.count++;

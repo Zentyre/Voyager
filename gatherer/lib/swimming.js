@@ -22,6 +22,9 @@ const { goals } = require("mineflayer-pathfinder");
 const { Vec3 } = require("vec3");
 
 const WATERY = /^(water|bubble_column|kelp|kelp_plant|seagrass|tall_seagrass)$/;
+// The bubbles over a magma block under water: they drag down.
+const isDownDraft = (b) => b?.name === "bubble_column" && String(b.getProperties?.().drag) === "true";
+const SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
 function installSwimming(ctx) {
     const { bot } = ctx;
@@ -37,6 +40,28 @@ function installSwimming(ctx) {
         return bot.entity.isInWater || watery(bot.blockAt(feet)) || watery(bot.blockAt(feet.offset(0, -1, 0)));
     };
 
+    // A magma block under water makes a column of bubbles that drags anything
+    // touching it down, much faster than it can swim up, onto the magma
+    // (which burns). The game counts the bubbles at its eyes as air, so in
+    // the middle of one it sat on the magma burning; at the edge of one, its
+    // head in plain water, it was dragged down drowning, and swimming
+    // straight up for air took it back into the bubbles.
+    function bodyBlocks() {
+        const p = bot.entity.position;
+        const out = [];
+        for (let x = Math.floor(p.x - 0.3); x <= Math.floor(p.x + 0.3); x++)
+            for (let z = Math.floor(p.z - 0.3); z <= Math.floor(p.z + 0.3); z++)
+                for (let y = Math.floor(p.y); y <= Math.floor(p.y + 1.8); y++) out.push(bot.blockAt(new Vec3(x, y, z)));
+        return out;
+    }
+    const dragged = () => Boolean(bot.entity) && bodyBlocks().some(isDownDraft);
+    const onMagma = () => Boolean(bot.entity?.onGround) && bot.blockAt(bot.entity.position.offset(0, -0.2, 0).floored())?.name === "magma_block";
+    function draftOverhead() {
+        const e = eye().floored();
+        for (let y = e.y; y < e.y + 30 && watery(bot.blockAt(new Vec3(e.x, y, e.z))); y++) if (isDownDraft(bot.blockAt(new Vec3(e.x, y, e.z)))) return true;
+        return false;
+    }
+
     let underSince = null;
     let inWaterSince = null;
     // Time to come up is the depth at ~2.5 blocks a second; keep 4 s spare.
@@ -50,11 +75,15 @@ function installSwimming(ctx) {
     function secondsToAir() {
         const e = eye().floored();
         let y = e.y;
-        while (y < e.y + 30 && watery(bot.blockAt(new Vec3(e.x, y + 1, e.z)))) y++;
+        let draft = dragged(); // (straight up is no way out through a magma block's bubbles)
+        while (y < e.y + 30 && watery(bot.blockAt(new Vec3(e.x, y + 1, e.z)))) {
+            y++;
+            if (isDownDraft(bot.blockAt(new Vec3(e.x, y, e.z)))) draft = true;
+        }
         const up = (y + 1 - eye().y) / UP;
         const lid = bot.blockAt(new Vec3(e.x, y + 1, e.z));
-        if (!lid || dry(lid)) return up;
-        const dig = lidSeconds(lid);
+        if (!draft && (!lid || dry(lid))) return up;
+        const dig = draft ? null : lidSeconds(lid);
         if (dig !== null) return up + dig;
         if (Date.now() - across.at > 1000) {
             const way = wayToAir();
@@ -77,11 +106,13 @@ function installSwimming(ctx) {
         inWaterSince = wet() ? inWaterSince ?? Date.now() : null;
         if (surfacing) return;
 
-        // Running out of air: drop everything and go up, now.
-        if (ctx.shortOfAir()) {
+        // Running out of air, or caught in a magma block's bubbles (or on the
+        // magma, in the water): drop everything and get out, now.
+        const caught = dragged() || (onMagma() && wet());
+        if (ctx.shortOfAir() || caught) {
             if (bot.targetDigBlock) bot.stopDigging();
             ctx.stopCurrentAction();
-            ctx.breathe().catch(() => {});
+            ctx.breathe({ force: caught }).catch(() => {});
             return;
         }
 
@@ -136,14 +167,25 @@ function installSwimming(ctx) {
     // the far side of the ice. Returns the way there (water blocks, the last
     // one under the air) or null.
     function wayToAir() {
+        // keeping clear of a magma block's bubbles, a block off them if it can
+        return searchAir(true) || searchAir(false);
+    }
+    function searchAir(wide) {
         const start = eye().floored();
         if (!watery(bot.blockAt(start))) return null;
+        const clear = (q) => {
+            const b = bot.blockAt(q);
+            if (!watery(b) || isDownDraft(b)) return false;
+            if (!wide || q.distanceTo(start) <= 1.5) return true; // (right by where it starts: the first step out)
+            return !SIDES.some(([sx, sz]) => isDownDraft(bot.blockAt(q.offset(sx, 0, sz))));
+        };
         const seen = new Map([[start.toString(), null]]);
         let edge = [start];
         for (let steps = 0; steps < 40 && edge.length; steps++) {
             const next = [];
             for (const p of edge) {
-                if (dry(bot.blockAt(p.offset(0, 1, 0)))) {
+                // (not up through the bubbles: their top drags under too)
+                if (!isDownDraft(bot.blockAt(p)) && dry(bot.blockAt(p.offset(0, 1, 0)))) {
                     const way = [];
                     for (let q = p; q; q = seen.get(q.toString())) way.unshift(q);
                     return way;
@@ -153,7 +195,7 @@ function installSwimming(ctx) {
                     const k = q.toString();
                     if (seen.has(k) || seen.size > 4000 || Math.abs(q.x - start.x) > 12 || Math.abs(q.z - start.z) > 12 || q.y < start.y - 6) continue;
                     seen.set(k, p);
-                    if (watery(bot.blockAt(q))) next.push(q);
+                    if (clear(q)) next.push(q);
                 }
             }
             edge = next;
@@ -163,9 +205,10 @@ function installSwimming(ctx) {
 
     // Up for air: short of it, or (`full`) before a dive with less than a
     // full breath. Anyone asking while it's on its way up waits for it.
-    function breathe({ full = false } = {}) {
+    // (`force`: caught in a magma block's bubbles, whatever its air.)
+    function breathe({ full = false, force = false } = {}) {
         if (surfacing) return surfacing;
-        if (!(ctx.shortOfAir() || (full && headUnder() && air() < 19))) return Promise.resolve();
+        if (!(force || ctx.shortOfAir() || (full && headUnder() && air() < 19))) return Promise.resolve();
         surfacing = surface().finally(() => (surfacing = null));
         return surfacing;
     }
@@ -175,6 +218,13 @@ function installSwimming(ctx) {
             await ctx.during("Swimming up for air", async () => {
                 bot.pathfinder.setGoal(null);
                 bot.clearControlStates();
+                // In a magma block's bubbles, on the magma, or with them over its
+                // head: out of them sideways first (straight up they drag it back).
+                if (dragged() || onMagma() || draftOverhead()) {
+                    ctx.log(`Caught by the bubbles over a magma block at ${ctx.fmt(bot.entity.position.floored())}; swimming out of them.`);
+                    const way = wayToAir();
+                    if (way) await swimAlong(way, 12000);
+                }
                 const start = Date.now();
                 let bestY = bot.entity.position.y;
                 let stuckSince = Date.now();
@@ -255,8 +305,9 @@ function installSwimming(ctx) {
                 way.forEach((p, i) => {
                     if (centre(p).distanceTo(e) < centre(way[at]).distanceTo(e)) at = i;
                 });
-                let aim = way[at];
-                for (let i = at + 1; i < Math.min(way.length, at + 6); i++) if (straight(e, centre(way[i]))) aim = way[i];
+                // the next step at least (where it is now is no way out), or further on if it's straight
+                let aim = way[Math.min(at + 1, way.length - 1)];
+                for (let i = at + 2; i < Math.min(way.length, at + 6); i++) if (straight(e, centre(way[i]))) aim = way[i];
                 if (aim === way[way.length - 1]) aim = aim.offset(0, 1, 0); // the last one: up into the air
                 const t = centre(aim);
                 const dx = t.x - e.x, dy = t.y - e.y, dz = t.z - e.z;
@@ -270,12 +321,16 @@ function installSwimming(ctx) {
         }
     }
 
-    // Nothing but water between two points?
+    // Nothing but water (or air) between two points (eye height), and no
+    // magma block's bubbles where its body would go?
     function straight(a, b) {
         const n = Math.ceil(a.distanceTo(b) / 0.3);
         for (let i = 1; i < n; i++) {
             const p = a.plus(b.minus(a).scaled(i / n));
             if (!watery(bot.blockAt(p.floored())) && !dry(bot.blockAt(p.floored()))) return false;
+            for (const [ox, oy, oz] of [[0.3, 0, 0.3], [-0.3, 0, 0.3], [0.3, 0, -0.3], [-0.3, 0, -0.3], [0.3, -1.4, 0.3], [-0.3, -1.4, 0.3], [0.3, -1.4, -0.3], [-0.3, -1.4, -0.3]]) {
+                if (isDownDraft(bot.blockAt(p.offset(ox, oy, oz).floored()))) return false;
+            }
         }
         return true;
     }
@@ -329,7 +384,7 @@ function installSwimming(ctx) {
                 for (let y = top - 2; y <= top + 2; y++) {
                     const p = new Vec3(me.x + dx, y, me.z + dz);
                     const ground = bot.blockAt(p.offset(0, -1, 0));
-                    if (!ground || ground.boundingBox !== "block" || watery(ground)) continue;
+                    if (!ground || ground.boundingBox !== "block" || watery(ground) || ground.name === "magma_block") continue;
                     if (!dry(bot.blockAt(p)) || !dry(bot.blockAt(p.offset(0, 1, 0)))) continue;
                     // at the water's edge (not a spot behind a bank: it swam into the bank)
                     if (!SIDES.some(([sx, sz]) => watery(bot.blockAt(p.offset(sx, -1, sz))) || watery(bot.blockAt(p.offset(sx, -2, sz))))) continue;
@@ -382,13 +437,38 @@ function installSwimming(ctx) {
         const d = waterOver(pos);
         return d / DOWN + digSeconds(pos) + d / UP + SPARE;
     }
-    ctx.tooDeepToDive = (pos) => isUnderwater(pos) && diveSeconds(pos) > BREATH;
+    // Magma blocks about (every column of bubbles starts at one), looked for
+    // as far out as it looks for things to mine, every few seconds: no
+    // diving within a couple of blocks of the bubbles over one.
+    let hazards = { at: 0, from: null, list: [] };
+    function magmaAbout() {
+        const me = bot.entity.position;
+        if (Date.now() - hazards.at > 5000 || !hazards.from || hazards.from.distanceTo(me) > 8) {
+            const id = bot.registry.blocksByName.magma_block?.id;
+            const range = (ctx.config?.searchRadius ?? 110) + 8;
+            hazards = { at: Date.now(), from: me.clone(), list: id === undefined ? [] : bot.findBlocks({ matching: id, maxDistance: range, count: 1000 }) };
+        }
+        return hazards.list;
+    }
+    // Why it can't dive for the block at `pos` (null if it can, or it isn't under water).
+    function cantDiveFor(pos) {
+        if (!isUnderwater(pos)) return null;
+        const d = waterOver(pos);
+        // magma beside it or below it (its bubbles go up to the top of the water)
+        if (magmaAbout().some((m) => Math.abs(m.x - pos.x) <= 2 && Math.abs(m.z - pos.z) <= 2 && m.y >= pos.y - 8 && m.y <= pos.y + d)) {
+            return "there's magma down there, and its bubbles drag you under";
+        }
+        if (diveSeconds(pos) > BREATH) return `too deep to dive for (${d} blocks of water)`;
+        return null;
+    }
+    ctx.cantDiveFor = cantDiveFor;
     ctx.waterOver = waterOver;
 
     async function diveTo(pos) {
         const target = pos.offset(0.5, 0.5, 0.5);
         const close = () => eye().distanceTo(target) <= 4.2;
-        if (diveSeconds(pos) > BREATH) throw new Error(`too deep to dive for (${waterOver(pos)} blocks of water)`);
+        const why = cantDiveFor(pos);
+        if (why) throw new Error(why);
         // Not enough air left for this one (already down there: to dig it and
         // get back up): up for a full breath first, rather than start and be
         // called away half way through.
@@ -445,10 +525,34 @@ function installSwimming(ctx) {
 // does the same; this adds that move: from water onto ground beside it
 // level with the top of the water, with room to come up.
 const Move = require("mineflayer-pathfinder/lib/move");
-const SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
 function addWaterExits(movements) {
+    const bot = movements.bot;
     const isWater = (b) => Boolean(b?.name) && (/^(water|bubble_column)$/.test(b.name) || String(b.getProperties?.().waterlogged) === "true");
+
+    // Bubbles are water (it took them for air), and not something to dig.
+    const bubbles = bot.registry.blocksByName.bubble_column;
+    if (bubbles) {
+        movements.liquids.add(bubbles.id);
+        movements.blocksCantBreak.add(bubbles.id);
+    }
+    // Never through a magma block's bubbles, nor onto magma (it burns); a
+    // block clear of the bubbles if there's another way.
+    const hazard = (block) => {
+        if (!block?.position) return 0;
+        if (isDownDraft(block)) return 100;
+        if (bot.blockAt(block.position.offset(0, -1, 0))?.name === "magma_block") return 100;
+        if (isWater(block) && SIDES.some(([dx, dz]) => isDownDraft(bot.blockAt(block.position.offset(dx, 0, dz))))) return 10;
+        return 0;
+    };
+    movements.exclusionAreasStep.push(hazard);
+    // (dropping down: the blocks it falls past are checked, but not where it lands)
+    const getLandingBlock = movements.getLandingBlock.bind(movements);
+    movements.getLandingBlock = (node, dir) => {
+        const land = getLandingBlock(node, dir);
+        return land && hazard(land) >= 100 ? null : land;
+    };
+
     const getNeighbors = movements.getNeighbors.bind(movements);
     movements.getNeighbors = (node) => {
         const neighbors = getNeighbors(node);

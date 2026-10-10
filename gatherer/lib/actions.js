@@ -95,7 +95,7 @@ function installActions(ctx) {
                 continue;
             }
 
-            let tooDeep = 0; // left out for the water over them
+            let tooDeep = 0; // left out: under water it can't dive for
             const candidates = () => bot
                 .findBlocks({
                     matching: harvestable.map((b) => b.id),
@@ -104,7 +104,7 @@ function installActions(ctx) {
                 })
                 .filter((p) => !skipped.has(p.toString()) && !isProtected(p) && !learn.isUnreachable(p))
                 .filter((p) => !ctx.crew?.claimedByOther(`block:${p}`))
-                .filter((p) => !(ctx.tooDeepToDive?.(p) && ++tooDeep)); // more water over it than one breath allows
+                .filter((p) => !(ctx.cantDiveFor?.(p) && ++tooDeep)); // more water over it than one breath allows, or magma by it
             const positions = candidates();
             // Prefer blocks near our own height: the top of a tree whose trunk
             // is gone looks close but can't be reached without building up.
@@ -126,7 +126,7 @@ function installActions(ctx) {
                 lastExplore = null;
             }
             if (positions.length === 0) {
-                const deep = tooDeep ? ` (only under water too deep to dive for)` : "";
+                const deep = tooDeep ? ` (only under water I can't dive for: too deep, or by magma)` : "";
                 if (++exploreAttempts > config.maxExploreAttempts) {
                     throw new Error(`couldn't find any ${name} nearby${deep}`);
                 }

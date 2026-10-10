@@ -298,6 +298,14 @@ The dashboard map shows them as small squares (hover for which and where).
   with a full breath (it comes up first rather than start a dig it would
   have to leave). Deeper blocks are left alone (it says so if that's all
   there is), and it would rather have them from dry land or shallow water.
+- Magma under water: its bubbles drag anything touching them down, faster
+  than it can swim up, onto the magma (which burns). The game counts the
+  bubbles at its eyes as air, so in the middle of them it burned, and at
+  the edge of them (head in plain water) it was dragged down drowning. It
+  doesn't go through them or walk on magma, doesn't dive for anything
+  within a couple of blocks of magma, and if it's caught anyway it drops
+  what it's doing and swims out of them sideways before going up. Its
+  timing for getting to air and its way up both go round them.
 - Left idle in deep water it keeps its head up, then swims to where it can
   climb out (a bank no higher than the water). If every bank is a block too
   high, it digs the edge of the nearest one down and climbs out there.
