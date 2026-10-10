@@ -1,0 +1,20 @@
+{
+	"schemaVersion": 1,
+	"id": "gatherer_dashboard",
+	"version": "${version}",
+	"name": "Gatherer Dashboard",
+	"description": "Press J in game to see and command your Gatherer bots (talks to the Gatherer dashboard).",
+	"authors": ["Zentyre"],
+	"license": "MIT",
+	"icon": "assets/gatherer_dashboard/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": ["dev.gatherer.dashboard.GathererDashboard"]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

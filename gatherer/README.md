@@ -131,6 +131,30 @@ read on the way.
 "come" }`) are there for scripts, with the token as `?token=` or an `X-Token`
 header.
 
+### In game (Fabric mod)
+
+`gatherer-mod/` (next to this folder) is a small client mod for Minecraft
+26.3 that opens the dashboard in game: press **J** (change it under Options →
+Controls → Key Binds → Gatherer). It shows the bots down the left, or the
+whole crew; what the chosen one is doing, its health, food, position, job,
+queue and inventory; buttons for come, stop, status, inventory, eat, sleep,
+home, deposit, armor and farm; a box for any other command (Enter sends it);
+and the log. The game doesn't pause while it's open. The website keeps
+working as before; the mod only talks to it.
+
+1. Install [Fabric Loader](https://fabricmc.net/use/installer/) 0.19.5 or
+   newer for 26.3, and put [Fabric API](https://modrinth.com/mod/fabric-api)
+   (0.162.0+26.3 or newer) in your `mods` folder.
+2. Put `gatherer-mod/gatherer-dashboard-1.0.0.jar` in the `mods` folder too.
+   It's client-only: nothing goes on the server.
+3. Start the bots, then the game. On the same computer as the bots it just
+   works. Otherwise press J, **Settings**, and paste the link the console
+   printed (`http://100.x.y.z:3000/?token=...`, see Tailscale above): the
+   token is taken out of it. It's kept in `config/gatherer-dashboard.json`.
+
+Building it yourself: `cd gatherer-mod` then `./gradlew build` (needs Java
+25); the jar lands in `build/libs/`.
+
 ## Accounts (online-mode servers)
 
 On a server with `online-mode=true` every bot needs **its own Minecraft Java
@@ -599,6 +623,7 @@ with its progress and what's still to place (what it has and what's in chests).
 | `lib/updater.js`    | Dashboard Update/Restart (git pull, npm install)          |
 | `Start Dashboard.vbs`| Windows launcher: runs Gatherer hidden, opens the dashboard |
 | `dashboard/index.html` | The dashboard page                                     |
+| `../gatherer-mod/`  | Fabric client mod: the dashboard in game (press J)        |
 | `lib/compat.js`     | Minecraft 26.3 support: registers `compat/26.3` data, adapts packets |
 | `lib/mods.js`       | Modded servers: unknown modded blocks, list of the server's mods |
 | `compat/`           | Generated 26.3 data and the script that builds it         |
