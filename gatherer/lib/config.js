@@ -52,6 +52,7 @@ const DEFAULTS = {
     reconnect: true, // crew mode: rejoin after being kicked or disconnected
     dashboard: { port: 3000 }, // web page (on this computer only) to watch and command the bots; false to turn off
     deathWhisper: true, // /msg the owner where a bot died
+    doneWhisper: true, // /msg the owner when a job is done (or failed), however it was asked for
     autoStart: [], // with Start Dashboard.vbs: bots to start right away (names, or true for all)
     // builder profile: chests to take materials from (besides any within
     // chestRadius of the build and of home), and "clear" to dig out anything

@@ -411,6 +411,13 @@ When a bot dies it sends the owner a private message with where it happened,
 e.g. `I died at -390 70 1310 in the overworld (Zyntharic was slain by Zombie).`
 (`"deathWhisper": false` turns that off.)
 
+When a bot finishes a job, or gives up on one, it also `/msg`s the owner,
+however the job was asked for (chat, `/msg`, the dashboard or the in-game
+screen): `Done: got 16 iron ingot.`, `Done: planting 9 carrot.`,
+`Couldn't get 3 diamond: …`. That's every queued item and every activity
+(farm, plant, breed, brew, build, sleep, come, deposit, give, water, bucket),
+not jobs you stopped. (`"doneWhisper": false` turns that off.)
+
 | Command                          | What it does                                  |
 |----------------------------------|-----------------------------------------------|
 | `!get <item> [count]`            | Add a task to the queue and start (`!gather`, `!craft`, `!smelt` also work) |
@@ -556,6 +563,7 @@ with its progress and what's still to place (what it has and what's in chests).
 | `quitWhenDone`       | `false`       | Disconnect when the queue is done                                 |
 | `chatter`            | `true`        | Post progress messages and replies in game chat (they always show on the dashboard) |
 | `deathWhisper`       | `true`        | `/msg` the owner where the bot died                               |
+| `doneWhisper`        | `true`        | `/msg` the owner when a job is done (or failed), however it was asked for |
 | `build`              | `{ "chests": [], "chestRadius": 24, "maxChests": 16, "clear": false }` | Builder: extra chests (`[{ "x": 0, "y": 64, "z": 0 }]`), how far to look for chests, and always clearing what's in the way |
 | `dashboard`          | `{ "port": 3000 }` | Web dashboard (only this PC can open it); `false` to turn it off |
 | `autoStart`          | `[]`          | With `Start Dashboard.vbs`: bots to start right away (names, or `true` for all) |

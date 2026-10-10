@@ -54,6 +54,16 @@ function createContext(bot, config) {
         if (bot.entity) bot.whisper(player, message);
     };
 
+    // A job finished (or failed): /msg the owner, however it was asked for
+    // ("doneWhisper"). Not when it was the owner who asked by /msg: they've
+    // just been told.
+    ctx.tellOwner = (message, asked = null) => {
+        const owner = config.owner;
+        if (!owner || config.doneWhisper === false || !bot.entity) return;
+        if (asked && String(asked).toLowerCase() === owner.toLowerCase()) return;
+        bot.whisper(owner, message);
+    };
+
     ctx.fmt = (pos) => `${Math.floor(pos.x)} ${Math.floor(pos.y)} ${Math.floor(pos.z)}`;
 
     // What the bot is doing right now, for the dashboard: the goals it is

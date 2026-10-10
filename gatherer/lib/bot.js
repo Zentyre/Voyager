@@ -301,6 +301,7 @@ function createBot(config, crew, reporter) {
                 } catch (err) {
                     if (err instanceof ctx.Stopped) return;
                     ctx.tell(task.replyTo, `Couldn't get ${task.item}: ${err.message}`);
+                    ctx.tellOwner(`Couldn't get ${task.count} ${task.item}: ${err.message}`, task.replyTo);
                 } finally {
                     ctx.current = null;
                     ctx.ahead = null;
@@ -359,6 +360,7 @@ function createBot(config, crew, reporter) {
             }
         }
         ctx.tell(task.replyTo, `Got ${task.count} ${task.item}.`);
+        ctx.tellOwner(`Done: got ${task.count} ${task.item}.`, task.replyTo);
     }
 
     // A skin is "http://textures.minecraft.net/texture/<hash>"; the dashboard
@@ -461,8 +463,12 @@ function createBot(config, crew, reporter) {
         ctx.replyTo = replyTo;
         try {
             await ctx.within(goal || label[0].toUpperCase() + label.slice(1), fn);
+            if (!ctx.stopRequested) ctx.tellOwner(`Done: ${(goal || label).replace(/^\w/, (c) => c.toLowerCase())}.`);
         } catch (err) {
-            if (!(err instanceof ctx.Stopped)) say(`Couldn't ${label}: ${err.message}`);
+            if (!(err instanceof ctx.Stopped)) {
+                say(`Couldn't ${label}: ${err.message}`);
+                ctx.tellOwner(`Couldn't ${label}: ${err.message}`, replyTo);
+            }
         } finally {
             ctx.replyTo = null;
             ctx.doneDoing();
