@@ -285,7 +285,8 @@ function installActions(ctx) {
         await bot.lookAt(pos.offset(0.5 + offset[0], 0.5 + offset[1], 0.5 + offset[2]), true);
         const held = bot.heldItem;
         const helmet = bot.inventory.slots[bot.getEquipmentDestSlot("head")];
-        const enchants = [...(held?.enchants || []), ...(helmet?.enchants || [])];
+        const list = (item) => (Array.isArray(item?.enchants) ? item.enchants : []);
+        const enchants = [...list(held), ...list(helmet)];
         // Head under water, or not standing on anything: each makes it five times slower.
         const inWater = ctx.headUnderwater ? ctx.headUnderwater() : ["water", "flowing_water"].includes(bot._getBlockAtEyeLevel?.()?.name);
         const ms = block.digTime(held?.type ?? null, bot.game.gameMode === "creative", inWater, !bot.entity.onGround, enchants, bot.entity.effects);

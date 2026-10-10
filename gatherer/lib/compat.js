@@ -41,6 +41,7 @@ function registerExtraVersions() {
         data.pc[version] = entry;
     }
     aliasChunkFormat();
+    listEnchantments();
     aliasPhysicsFeatures();
     allowInMineflayer();
 }
@@ -88,6 +89,43 @@ function aliasChunkFormat() {
     require.cache[id].exports = wrapped;
 }
 
+// Items' enchantments, since items carry components (1.20.5+): prismarine-item
+// hands back the component as it came ({ enchantments: [{ id, level }] }),
+// where mineflayer and prismarine-block expect a list of { name, lvl }. An
+// enchanted tool couldn't dig at all ("enchantments.concat is not a
+// function", or "not iterable" without a helmet on). Names come from the
+// server's own list of enchantments (sent on joining, see patchBot: mods add
+// to it, which moves the numbers), else the built-in one.
+function listEnchantments() {
+    const id = require.resolve("prismarine-item");
+    const original = require(id);
+    if (original.enchantsListed) return;
+    const wrapped = function (registryOrVersion) {
+        const Item = original(registryOrVersion);
+        const registry = typeof registryOrVersion === "string" ? require("prismarine-registry")(registryOrVersion) : registryOrVersion;
+        const own = Object.getOwnPropertyDescriptor(Item.prototype, "enchants");
+        if (!own?.get) return Item;
+        Object.defineProperty(Item.prototype, "enchants", {
+            configurable: true,
+            get() {
+                const component = this.componentMap?.get?.("enchantments");
+                if (!component) return own.get.call(this);
+                const data = component.data;
+                const list = Array.isArray(data) ? data : Array.isArray(data?.enchantments) ? data.enchantments : [];
+                const names = registry?.serverEnchantments;
+                return list.map((e) => ({
+                    name: (typeof e.name === "string" ? e.name : names?.[e.id] ?? registry?.enchantments?.[e.id]?.name) ?? null,
+                    lvl: e.level ?? e.lvl ?? 0,
+                }));
+            },
+            set: own.set,
+        });
+        return Item;
+    };
+    wrapped.enchantsListed = true;
+    require.cache[id].exports = wrapped;
+}
+
 function is26_3(bot) {
     return bot.registry?.version?.minecraftVersion === "26.3" || bot._client?.version === "26.3";
 }
@@ -96,6 +134,13 @@ function is26_3(bot) {
 function patchBot(bot) {
     const conv = require("mineflayer/lib/conversions");
     const client = bot._client;
+
+    // The server's list of enchantments, in its order (items name them by
+    // number): see listEnchantments.
+    client.on("registry_data", (packet) => {
+        if (!/(^|:)enchantment$/.test(packet?.id || "") || !Array.isArray(packet.entries) || !bot.registry) return;
+        bot.registry.serverEnchantments = packet.entries.map((e) => String(e.key).replace(/^minecraft:/, ""));
+    });
 
     // Recent movement-related packets, printed if the server kicks the bot, so a
     // kick can be traced to the packet that caused it.

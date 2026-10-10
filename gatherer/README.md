@@ -165,6 +165,10 @@ ships its own 26.3 support (`compat/`). It connects to 26.3 servers directly, wi
 no ViaVersion needed. See [compat/README.md](compat/README.md) for how it was built
 and tested. For anything newer than 26.3, the bot connects as the newest version
 it knows and tells you; ViaVersion + ViaBackwards on the server can bridge the gap.
+It also fixes enchanted items for the libraries: they read an item's
+enchantments the pre-1.20.5 way, so an enchanted tool couldn't dig at all
+("enchantments.concat is not a function"). Enchantments are named from the
+server's own list, so ones added by mods don't shift the vanilla ones.
 
 **Modded servers (Fabric, NeoForge):** the bot can't load mods; they are Java
 code for the real game client. It joins as a vanilla client, so the server must
