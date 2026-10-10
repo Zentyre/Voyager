@@ -486,21 +486,21 @@ with its progress and what's still to place (what it has and what's in chests).
 | Key                  | Default       | Meaning                                                          |
 |----------------------|---------------|------------------------------------------------------------------|
 | `host`, `port`       | `localhost`, `25565` | Server address                                            |
-| `username`, `auth`   | `Gatherer`, `offline` | Bot account                                              |
+| `username`, `auth`   | `Gatherer`, `offline` | Bot account. `auth`: `microsoft` for online-mode servers (each bot needs its own account that owns Minecraft; `username` is then just the label its login is saved under), `offline` for offline-mode ones. With a `bots` list, the top-level `username` isn't used |
 | `version`            | `false`       | Minecraft version, `false` = auto-detect                          |
 | `owner`              | `"Zentyre"`   | Only take commands from this player (`null` = anyone, unless `admins` is set). Gets the death `/msg` |
 | `admins`             | `[]`          | More players the bots take commands from, e.g. `["Friend1", "Friend2"]`. Can be set per bot too |
 | `commandPrefix`      | `"!"`         | Chat commands must start with this                                |
-| `viewDistance`       | `"normal"`    | Chunks requested from the server: `tiny` 6, `short` 8, `normal` 10, `far` 12. More = sees further, more RAM. Capped by the server's own view-distance |
+| `viewDistance`       | `"normal"`    | Chunks requested from the server: `tiny` 6, `short` 8, `normal` 10, `far` 12, or a number (e.g. `16`). More = sees further, more RAM. Capped by the server's own view-distance |
 | `searchRadius`       | `110`         | How far (blocks) to look for resources and mobs (keep under view distance × 16) |
 | `stationRadius`      | `24`          | Beds: it looks for one to sleep in within four times this (96 blocks) |
 | `workbenchRange`     | `64`          | Use a crafting table / furnace / brewing stand within this distance (seen or remembered) instead of making one |
 | `exploreDistance`    | `64`          | How far to wander when nothing is in range                        |
 | `maxExploreAttempts` | `8`           | Give up on an item after this many fruitless wanders              |
 | `chest`              | `null`        | `{ "x": 0, "y": 64, "z": 0 }`: where to unload when full / done (a chest or barrel; `!setchest` in game overrides it) |
-| `protectRadius`      | `0`           | Never dig within this many blocks of the spawn point or chest     |
+| `protectRadius`      | `0`           | Don't mine natural blocks within this many blocks of where it logged in or of its chest (keeps it off log and cobblestone builds). Only what it chooses to mine: passing through, it never breaks chests, beds, doors, glass, torches or farms, but may dig plain blocks |
 | `extraMineable`      | `[]`          | Extra block names it may mine besides natural ones                |
-| `hunt`               | `true`        | Allow hunting mobs for drops and food                             |
+| `hunt`               | `true`        | Allow killing animals and mobs for drops (leather, food, string…)  |
 | `defend`             | `true`        | Fight back against hostile mobs                                   |
 | `defendRadius`       | `8`           | How close a hostile mob must be before it reacts                  |
 | `sprintJump`         | `true`        | Jump while sprinting on straight, flat stretches (faster; uses a little more food) |
@@ -515,23 +515,23 @@ with its progress and what's still to place (what it has and what's in chests).
 | `autoArmor`          | `true`        | Wear the best armor and shield it carries                         |
 | `eatBelow`           | `14`          | Eat when hunger is at or below this (of 20)                       |
 | `findFoodBelow`      | `8`           | Go get food when hungry with nothing to eat                       |
-| `autoSleep`          | `true`        | Sleep at night if a bed is nearby                                 |
-| `bringBed`           | `false`       | At night, make and place a bed if none is nearby                  |
+| `autoSleep`          | `true`        | Sleep at night or in a thunderstorm if a free bed is nearby (bots are players: never sleeping brings phantoms) |
+| `bringBed`           | `false`       | With `autoSleep`: when no free bed is nearby, put down its own (making one if needed) and pick it back up in the morning |
 | `farm`               | `true`        | Allow farming for crops                                           |
 | `farmSize`           | `9`           | How many plots to till and plant when starting a field            |
 | `farmWaitMinutes`    | `30`          | Give up waiting for crops to grow after this long                 |
 | `placeWater`         | `true`        | Bring water in a bucket to start a farm where there's none        |
-| `learn`              | `true`        | Learn from experience and remember places                         |
+| `learn`              | `true`        | Learn from experience (what works, how long things take) and remember places; shared with the crew |
 | `memoryFile`         | `memory/<username>.json` | Where learned data is saved                            |
 | `memoryRange`        | `400`         | How far away remembered places are worth travelling to            |
-| `returnHome`         | `true`        | Walk back to the spawn point after the queue is done              |
+| `returnHome`         | `true`        | Walk back to where it logged in after the queue is done (with a chest set, it goes there to unload anyway) |
 | `quitWhenDone`       | `false`       | Disconnect when the queue is done                                 |
-| `chatter`            | `true`        | Post progress messages in game chat                               |
+| `chatter`            | `true`        | Post progress messages and replies in game chat (they always show on the dashboard) |
 | `deathWhisper`       | `true`        | `/msg` the owner where the bot died                               |
 | `build`              | `{ "chests": [], "chestRadius": 24, "maxChests": 16, "clear": false }` | Builder: extra chests (`[{ "x": 0, "y": 64, "z": 0 }]`), how far to look for chests, and always clearing what's in the way |
-| `dashboard`          | `{ "port": 3000, "host": "127.0.0.1" }` | Web dashboard; `false` to turn it off |
+| `dashboard`          | `{ "port": 3000, "host": "127.0.0.1" }` | Web dashboard; `127.0.0.1` = only this PC can open it, `false` to turn it off |
 | `autoStart`          | `[]`          | With `Start Dashboard.vbs`: bots to start right away (names, or `true` for all) |
-| `tasks`              | `[]`          | `[{ "item": "oak_log", "count": 32 }, …]`                         |
+| `tasks`              | `[]`          | Jobs to start on every launch: `[{ "item": "oak_log", "count": 32 }, …]` |
 | `bots`               | `[]`          | Crew members: `[{ "username": "Miner" }, …]`, each may override any setting |
 | `reconnect`          | `true`        | Crew: rejoin automatically after being kicked or disconnected     |
 
