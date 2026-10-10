@@ -102,34 +102,12 @@ The bar at the top sends any command (the same ones as in chat, without the
 `!`) to one bot, all bots, or the crew (which splits gathering jobs). The
 Activity panel on the right shows what each bot is doing, live.
 
-It only accepts connections from this computer. `"dashboard": false` turns
-it off.
-
-**From your phone or another computer.** The safe way, and one that works on
-any network (college or work Wi-Fi often stops devices on it reaching each
-other, and you never open a port to the internet), is
-[Tailscale](https://tailscale.com): a free private network between your own
-devices.
-
-1. Install Tailscale on the computer running the bots and on your phone (and
-   any other computer), and sign in to the same account on each.
-2. In `config.json`: `"dashboard": { "port": 3000, "host": "0.0.0.0" }`.
-3. Start the bots. The console prints the link with an access token:
-   `http://<this computer's IP>:3000/?token=...`. Use the computer's Tailscale
-   address (in the Tailscale app, `100.x.y.z`) as the IP.
-4. Open that link once on each device; it remembers the token. Bookmark
-   `http://100.x.y.z:3000/` after that.
-
-Without the token the dashboard turns everyone away. The token is made once
-and kept in `memory/dashboard-token.txt` (delete the file for a new one, which
-logs every device out), or set your own: `"token": "..."` in `"dashboard"`.
-Anyone with the link can command the bots, so don't share it. Don't open the
-port on a router instead: the dashboard is plain HTTP, so the token could be
-read on the way.
+It only works on this computer: it doesn't listen to the network, and it
+turns away other websites open in your browser trying to send it commands.
+`"dashboard": false` turns it off.
 
 `GET /status` (JSON) and `POST /command` (`{ "target": "Alpha", "text":
-"come" }`) are there for scripts, with the token as `?token=` or an `X-Token`
-header.
+"come" }`) are there for scripts and the in-game mod.
 
 ### In game (Fabric mod)
 
@@ -140,17 +118,17 @@ whole crew; what the chosen one is doing, its health, food, position, job,
 queue and inventory; buttons for come, stop, status, inventory, eat, sleep,
 home, deposit, armor and farm; a box for any other command (Enter sends it);
 and the log. The game doesn't pause while it's open. The website keeps
-working as before; the mod only talks to it.
+working as before; the mod only talks to it, on this computer.
 
 1. Install [Fabric Loader](https://fabricmc.net/use/installer/) 0.19.5 or
    newer for 26.3, and put [Fabric API](https://modrinth.com/mod/fabric-api)
    (0.162.0+26.3 or newer) in your `mods` folder.
 2. Put `gatherer-mod/gatherer-dashboard-1.0.0.jar` in the `mods` folder too.
    It's client-only: nothing goes on the server.
-3. Start the bots, then the game. On the same computer as the bots it just
-   works. Otherwise press J, **Settings**, and paste the link the console
-   printed (`http://100.x.y.z:3000/?token=...`, see Tailscale above): the
-   token is taken out of it. It's kept in `config/gatherer-dashboard.json`.
+3. Start the bots, then the game (on the same computer), and press J.
+
+If you changed the dashboard's port in `config.json`, set the same `"port"`
+in `config/gatherer-dashboard.json` in your Minecraft folder.
 
 Building it yourself: `cd gatherer-mod` then `./gradlew build` (needs Java
 25); the jar lands in `build/libs/`.
@@ -576,7 +554,7 @@ with its progress and what's still to place (what it has and what's in chests).
 | `chatter`            | `true`        | Post progress messages and replies in game chat (they always show on the dashboard) |
 | `deathWhisper`       | `true`        | `/msg` the owner where the bot died                               |
 | `build`              | `{ "chests": [], "chestRadius": 24, "maxChests": 16, "clear": false }` | Builder: extra chests (`[{ "x": 0, "y": 64, "z": 0 }]`), how far to look for chests, and always clearing what's in the way |
-| `dashboard`          | `{ "port": 3000, "host": "127.0.0.1" }` | Web dashboard; `127.0.0.1` = only this PC can open it, `false` to turn it off |
+| `dashboard`          | `{ "port": 3000 }` | Web dashboard (only this PC can open it); `false` to turn it off |
 | `autoStart`          | `[]`          | With `Start Dashboard.vbs`: bots to start right away (names, or `true` for all) |
 | `tasks`              | `[]`          | Jobs to start on every launch: `[{ "item": "oak_log", "count": 32 }, …]` |
 | `bots`               | `[]`          | Crew members: `[{ "username": "Miner" }, …]`, each may override any setting |

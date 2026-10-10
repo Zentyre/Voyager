@@ -79,9 +79,6 @@ public class DashboardScreen extends Screen {
 		commandY = quickY + 44;
 		logY = commandY + 26;
 
-		addRenderableWidget(Button.builder(Component.literal("Settings"), b -> minecraft.setScreenAndShow(new SettingsScreen(this, client)))
-			.bounds(width - 8 - 56, 4, 56, 16).build());
-
 		targetButtons.clear();
 		int y = detailsY;
 		for (String label : withCrew()) {
@@ -193,12 +190,12 @@ public class DashboardScreen extends Screen {
 
 		g.text(font, "Gatherer", 8, 8, WHITE, true);
 		int statusX = 8 + font.width("Gatherer") + 10;
-		int statusW = width - 8 - 56 - 8 - statusX;
+		int statusW = width - 8 - statusX;
 		String error = client.error;
 		boolean fresh = System.currentTimeMillis() - noticeAt < 6000 && notice != null;
 		if (fresh) g.text(font, fit(notice, statusW), statusX, 8, noticeBad ? RED : GREEN);
 		else if (error != null) g.text(font, fit(error, statusW), statusX, 8, RED);
-		else if (client.status == null) g.text(font, "Connecting to " + client.config.url + "...", statusX, 8, GREY);
+		else if (client.status == null) g.text(font, "Connecting to Gatherer...", statusX, 8, GREY);
 		else g.text(font, fit(onlineCount() + " of " + labels.size() + " bots online", statusW), statusX, 8, GREY);
 
 		if (target.equals(CREW)) crewDetails(g);

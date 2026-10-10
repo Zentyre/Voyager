@@ -50,7 +50,7 @@ const DEFAULTS = {
     quitWhenDone: false,
     chatter: true,
     reconnect: true, // crew mode: rejoin after being kicked or disconnected
-    dashboard: { port: 3000, host: "127.0.0.1" }, // web page to watch and command the bots; false to turn off
+    dashboard: { port: 3000 }, // web page (on this computer only) to watch and command the bots; false to turn off
     deathWhisper: true, // /msg the owner where a bot died
     autoStart: [], // with Start Dashboard.vbs: bots to start right away (names, or true for all)
     // builder profile: chests to take materials from (besides any within

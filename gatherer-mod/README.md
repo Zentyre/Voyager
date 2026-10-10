@@ -12,8 +12,8 @@ the bots are doing and command them. The game doesn't pause while it's open.
   Enter sends it.
 - The log, newest at the bottom.
 
-It talks to the dashboard Gatherer already runs (`GET /status`,
-`POST /command`), so the website keeps working as before.
+It talks to the dashboard Gatherer already runs on this computer
+(`GET /status`, `POST /command`), so the website keeps working as before.
 
 ## Install
 
@@ -24,11 +24,10 @@ It talks to the dashboard Gatherer already runs (`GET /status`,
    folder. It's client-only: nothing goes on the server.
 3. Start the bots, then the game, and press J.
 
-If the game runs on another computer than the bots: press J, then
-**Settings**, and paste the link the bots' console printed
-(`http://100.x.y.z:3000/?token=...`; see "From your phone or another
-computer" in `gatherer/README.md`). The token is taken out of the link. Both
-are kept in `config/gatherer-dashboard.json`.
+It talks to Gatherer's dashboard on this computer, so run the game on the
+same PC as the bots. If you changed the dashboard's port in Gatherer's
+`config.json`, set the same `"port"` in `config/gatherer-dashboard.json` in
+your Minecraft folder.
 
 The key can be changed under Options → Controls → Key Binds → Gatherer.
 

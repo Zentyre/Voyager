@@ -2,20 +2,16 @@
 // that shows every bot live and sends them commands. Built on Node's own
 // http module; the page gets updates over Server-Sent Events.
 //
-// It only listens on this computer unless "dashboard.host" is changed. Then a
-// token is required (printed at startup), since anyone who can open the page
-// can command the bots: "dashboard.token" if set, else one made once and kept
-// in memory/dashboard-token.txt, so devices that have opened the link stay in
-// across restarts.
+// It only listens on this computer, and only answers requests addressed to
+// it by a local name, coming from its own page (not another website open in
+// the browser sending commands to the bots).
 //
 // GET /status gives the same as the page sees, as plain JSON (for the in-game
-// screen mod, and scripts); POST /command sends one. Both take the token as
-// ?token= or an X-Token header too.
+// screen mod, and scripts); POST /command sends one.
 
 const fs = require("fs");
 const http = require("http");
 const path = require("path");
-const crypto = require("crypto");
 
 const PAGE = path.join(__dirname, "..", "dashboard", "index.html");
 const LOG_KEEP = 400;
@@ -23,9 +19,7 @@ const MAX_SCHEMATIC = 50 * 1024 * 1024;
 
 // `onControl(action, bot)` (manager mode): start/stop bots, update, shut down.
 function startDashboard(options, { onCommand, onControl = null, manager = false, names = [] } = {}) {
-    const settings = { port: 3000, host: "127.0.0.1", ...(typeof options === "object" ? options : {}) };
-    const local = ["127.0.0.1", "localhost", "::1"].includes(settings.host);
-    const token = local ? null : settings.token || keptToken();
+    const settings = { port: 3000, ...(typeof options === "object" ? options : {}), host: "127.0.0.1" };
 
     const bots = new Map(); // label -> latest status
     const logs = []; // { t, bot, text }
@@ -39,11 +33,18 @@ function startDashboard(options, { onCommand, onControl = null, manager = false,
         for (const res of clients) send(res, event, data);
     }
 
-    function authorized(req, url) {
-        if (!token) return true;
-        if (url.searchParams.get("token") === token) return true;
-        if (req.headers["x-token"] === token) return true;
-        return (req.headers.cookie || "").split(/;\s*/).includes(`gatherer_token=${token}`);
+    // Addressed to this computer (not a website's own name pointed here), and
+    // not sent by another website's page.
+    const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+    function fromHere(req) {
+        if (!LOCAL.test(req.headers.host || "")) return false;
+        const origin = req.headers.origin;
+        if (!origin || origin === "null") return !origin;
+        try {
+            return LOCAL.test(new URL(origin).host);
+        } catch (err) {
+            return false;
+        }
     }
 
     function itemNames() {
@@ -76,38 +77,19 @@ function startDashboard(options, { onCommand, onControl = null, manager = false,
         return skins.get(hash);
     }
 
-    function keptToken() {
-        const file = path.join(__dirname, "..", "memory", "dashboard-token.txt");
-        try {
-            const kept = fs.readFileSync(file, "utf8").trim();
-            if (kept) return kept;
-        } catch (err) {
-            // none yet
-        }
-        const made = crypto.randomBytes(12).toString("base64url");
-        try {
-            fs.mkdirSync(path.dirname(file), { recursive: true });
-            fs.writeFileSync(file, made);
-        } catch (err) {
-            console.log(`[dashboard] Couldn't save the access token (${err.message}); it'll change next start.`);
-        }
-        return made;
-    }
-
     const server = http.createServer((req, res) => {
         const url = new URL(req.url, "http://localhost");
-        if (!authorized(req, url)) {
+        if (!fromHere(req)) {
             res.writeHead(403, { "content-type": "text/plain" });
-            return res.end("Open the link printed in the console (it includes the access token).");
+            return res.end("The dashboard only answers this computer: open http://localhost:" + settings.port + "/");
         }
-        const headers = token ? { "set-cookie": `gatherer_token=${token}; Path=/; SameSite=Strict; HttpOnly` } : {};
 
         if (req.method === "GET" && url.pathname === "/") {
-            res.writeHead(200, { ...headers, "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+            res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
             return res.end(fs.readFileSync(PAGE));
         }
         if (req.method === "GET" && url.pathname === "/events") {
-            res.writeHead(200, { ...headers, "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
+            res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
             send(res, "snapshot", { bots: [...bots.values()], logs: logs.slice(-200), manager: Boolean(onControl) });
             clients.add(res);
             const ping = setInterval(() => res.write(": ping\n\n"), 20000);
@@ -248,8 +230,7 @@ function startDashboard(options, { onCommand, onControl = null, manager = false,
         }
     });
     server.listen(settings.port, settings.host, () => {
-        const host = local ? "localhost" : settings.host === "0.0.0.0" ? "<this computer's IP>" : settings.host;
-        console.log(`[dashboard] Open http://${host}:${settings.port}/${token ? `?token=${token}` : ""}`);
+        console.log(`[dashboard] Open http://localhost:${settings.port}/`);
     });
 
     function addLog(bot, text) {

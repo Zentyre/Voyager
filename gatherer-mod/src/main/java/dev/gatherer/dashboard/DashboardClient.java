@@ -32,9 +32,7 @@ public class DashboardClient {
 	}
 
 	private HttpRequest.Builder request(String path) {
-		HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(config.url + path)).timeout(Duration.ofSeconds(5));
-		if (!config.token.isEmpty()) builder.header("X-Token", config.token);
-		return builder;
+		return HttpRequest.newBuilder(URI.create(config.url() + path)).timeout(Duration.ofSeconds(5));
 	}
 
 	/** Ask for the status again, if it's been a second and nothing's on its way. */
@@ -43,20 +41,11 @@ public class DashboardClient {
 		if (polling || now - polledAt < 1000) return;
 		polling = true;
 		polledAt = now;
-		HttpRequest req;
-		try {
-			req = request("/status?logs=60").GET().build();
-		} catch (Exception e) {
-			error = "Bad dashboard URL: " + config.url;
-			polling = false;
-			return;
-		}
+		HttpRequest req = request("/status?logs=60").GET().build();
 		http.sendAsync(req, HttpResponse.BodyHandlers.ofString()).whenComplete((res, err) -> {
 			try {
 				if (err != null) {
-					error = "Can't reach the dashboard at " + config.url + " (is Gatherer running?)";
-				} else if (res.statusCode() == 403) {
-					error = "The dashboard wants its access token: Settings, then paste the link it printed";
+					error = "Can't reach Gatherer's dashboard on port " + config.port + " (is Gatherer running?)";
 				} else if (res.statusCode() != 200) {
 					error = "The dashboard said " + res.statusCode() + " (an old Gatherer? Update it)";
 				} else {
@@ -72,7 +61,7 @@ public class DashboardClient {
 		});
 	}
 
-	/** Poll again straight away (after sending a command, or new settings). */
+	/** Poll again straight away (after sending a command). */
 	public void soon() {
 		polledAt = 0;
 	}
@@ -88,7 +77,6 @@ public class DashboardClient {
 			return http.sendAsync(req, HttpResponse.BodyHandlers.ofString()).handle((res, err) -> {
 				soon();
 				if (err != null) return "Couldn't send it: can't reach the dashboard";
-				if (res.statusCode() == 403) return "Couldn't send it: the access token is wrong";
 				if (res.statusCode() != 200) return "Couldn't send it (" + res.statusCode() + ")";
 				return null;
 			});
