@@ -36,8 +36,10 @@ function createContext(bot, config) {
     // their own names), the config label before that.
     ctx.log = (message) => console.log(`[${bot.username || config.username}] ${message}`);
     // While a job someone asked for by /msg runs, ctx.replyTo is that player
-    // and everything the bot says goes to them privately.
+    // and everything the bot says goes to them privately. Asked from the
+    // in-game dashboard, it's ctx.QUIET: the log only, nothing in chat.
     ctx.replyTo = null;
+    ctx.QUIET = "@dashboard"; // (no player can be called that)
     ctx.sayPublic = (message) => {
         ctx.log(message);
         if (bot.entity && config.chatter !== false) bot.chat(message);
@@ -48,6 +50,7 @@ function createContext(bot, config) {
     ctx.tell = (player, message) => {
         if (!player) return ctx.say(message);
         ctx.log(message);
+        if (player === ctx.QUIET) return;
         if (bot.entity) bot.whisper(player, message);
     };
 

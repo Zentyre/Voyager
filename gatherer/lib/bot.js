@@ -616,14 +616,16 @@ function createBot(config, crew, reporter) {
     // `broadcast` is true when the whole crew got this command: then a bot
     // with nothing to contribute stays quiet instead of everyone saying so.
     // `team`: a job split between the crew (see spread.js).
-    async function handleCommand(text, fromPlayer, { broadcast = false, whisper = false, team = null } = {}) {
+    // `quiet`: from the in-game dashboard; answers go to the log, not chat.
+    async function handleCommand(text, fromPlayer, { broadcast = false, whisper = false, team = null, quiet = false } = {}) {
         if (!ctx.planner) return; // not spawned yet
-        // Asked by /msg: answer by /msg.
+        // Asked by /msg: answer by /msg. From the in-game dashboard: in its log only.
         const privately = whisper && fromPlayer;
+        const replyTo = privately ? fromPlayer : quiet && !fromPlayer ? ctx.QUIET : null;
         // Asked in public chat: answer in public, even while a private job runs.
-        const say = privately ? (message) => ctx.tell(fromPlayer, message) : fromPlayer ? ctx.sayPublic : ctx.say;
-        // Activities started by /msg report by /msg the whole time they run.
-        const runExclusive = (label, fn, goal = null) => runActivity(label, fn, privately ? fromPlayer : null, goal);
+        const say = replyTo ? (message) => ctx.tell(replyTo, message) : fromPlayer ? ctx.sayPublic : ctx.say;
+        // Activities (and jobs) started that way report that way the whole time they run.
+        const runExclusive = (label, fn, goal = null) => runActivity(label, fn, replyTo, goal);
         // come/give/guard act on whoever asked; from the dashboard or terminal, the owner.
         const requester = fromPlayer || config.owner || null;
         const cantSee = () => (fromPlayer ? "I can't see you." : `I can't see ${requester || "the owner"}.`);
@@ -639,7 +641,7 @@ function createBot(config, crew, reporter) {
                 if (!bot.registry.itemsByName[item]) return say(`There's no item called ${item}.`);
                 const count = parseInt(args[1] || "1", 10);
                 if (!(count > 0)) return;
-                ctx.queue.push({ item, count, replyTo: privately ? fromPlayer : null, team });
+                ctx.queue.push({ item, count, replyTo, team });
                 say(`Queued ${count} ${item}.`);
                 runQueue();
                 break;
@@ -943,15 +945,15 @@ function createBot(config, crew, reporter) {
 
     // Commands from the dashboard (single bot; in a crew they come through the coordinator).
     if (!crew && reporter?.onCommand) {
-        reporter.onCommand((text) => {
+        reporter.onCommand((text, { quiet = false } = {}) => {
             const mine = route(stripPrefix(text.trim()) ?? text, null);
-            if (mine !== null) run(mine, null);
+            if (mine !== null) run(mine, null, { quiet });
         });
     }
 
     if (crew) {
         // Commands handed out by the crew coordinator.
-        crew.onCommand(({ text, from, broadcast, team }) => run(text, from, { broadcast, team }));
+        crew.onCommand(({ text, from, broadcast, team, quiet }) => run(text, from, { broadcast, team, quiet }));
         crew.onSay((text) => say(text));
         crew.onQuit(() => {
             ctx.learn?.save();

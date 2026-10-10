@@ -103,10 +103,11 @@ function startCrew(configs, { manager = false } = {}) {
         return members.filter((m) => m.online);
     }
 
-    function dispatch(text, from) {
+    // `quiet`: from the in-game dashboard; nothing about it said in chat.
+    function dispatch(text, from, quiet = false) {
         const [cmd, ...args] = text.trim().split(/\s+/);
         const word = (cmd || "").toLowerCase();
-        if (word === "crew") return crewStatus();
+        if (word === "crew") return crewStatus(quiet);
 
         if (SPLIT.has(word) && args[0]) {
             const team = idle().length ? idle() : online();
@@ -120,34 +121,36 @@ function startCrew(configs, { manager = false } = {}) {
             const plan = helpers.map((m, index) => {
                 const share = base + (extra-- > 0 ? 1 : 0);
                 const team = helpers.length > 1 ? { names, index, size: helpers.length } : null;
-                post(m, { type: "command", text: `get ${args[0]} ${share}`, from, team });
+                post(m, { type: "command", text: `get ${args[0]} ${share}`, from, team, quiet });
                 return helpers.length > 1 ? `${m.name} ${share} (${compassName(headingFor(index, helpers.length))})` : `${m.name} ${share}`;
             });
-            if (helpers.length > 1) tell(`Splitting ${total} ${args[0]}: ${plan.join(", ")}.`);
+            if (helpers.length > 1) tell(`Splitting ${total} ${args[0]}: ${plan.join(", ")}.`, quiet);
             return;
         }
         if (EVERYONE.has(word)) {
-            for (const m of online()) post(m, { type: "command", text, from, broadcast: true });
+            for (const m of online()) post(m, { type: "command", text, from, broadcast: true, quiet });
             return;
         }
         const pick = idle()[0] || online()[0];
         if (!pick) return log("No bots are online.");
-        post(pick, { type: "command", text, from });
+        post(pick, { type: "command", text, from, quiet });
     }
 
     // Say something in game through the leader (the coordinator has no bot).
-    function tell(text) {
+    function tell(text, quiet = false) {
         log(text);
+        if (quiet) return;
         const leader = members.find((m) => m.online);
         if (leader) post(leader, { type: "say", text });
     }
 
-    function crewStatus() {
+    function crewStatus(quiet = false) {
         tell(
             "Crew: " +
                 members
                     .map((m) => `${m.name} (${!m.online ? "offline" : m.busy ? "busy" : "idle"})`)
-                    .join(", ")
+                    .join(", "),
+            quiet
         );
     }
 
@@ -323,9 +326,9 @@ function startCrew(configs, { manager = false } = {}) {
             names: members.map((m) => m.label),
             manager,
             onControl: manager ? control : null,
-            onCommand: (target, text) => {
-                if (target === "auto") return consoleCommand(text);
-                consoleCommand(`${target} ${text.replace(/^[!.]/, "")}`);
+            onCommand: (target, text, { quiet = false } = {}) => {
+                if (target === "auto") return consoleCommand(text, { quiet });
+                consoleCommand(`${target} ${text.replace(/^[!.]/, "")}`, { quiet });
             },
         });
         for (const m of members) report(m);
@@ -347,19 +350,19 @@ function startCrew(configs, { manager = false } = {}) {
     if (microsoft) log("Microsoft accounts: each bot that hasn't signed in before will show a code to enter, one at a time.");
 
     // Terminal and dashboard: "<botname> cmd", "all cmd", "crew", or a crew command.
-    function consoleCommand(line) {
+    function consoleCommand(line, { quiet = false } = {}) {
         const text = line.trim().replace(/^[!.]/, "");
         if (!text) return;
         const [first, ...rest] = text.split(/\s+/);
         const target = byName(first);
-        if (target && addresses(first, rest)) return post(target, { type: "command", text: rest.join(" "), from: null });
+        if (target && addresses(first, rest)) return post(target, { type: "command", text: rest.join(" "), from: null, quiet });
         if (first.toLowerCase() === "all") {
-            for (const m of online()) post(m, { type: "command", text: rest.join(" "), from: null, broadcast: true });
+            for (const m of online()) post(m, { type: "command", text: rest.join(" "), from: null, broadcast: true, quiet });
             return;
         }
-        dispatch(text, null);
+        dispatch(text, null, quiet);
     }
-    readline.createInterface({ input: process.stdin }).on("line", consoleCommand);
+    readline.createInterface({ input: process.stdin }).on("line", (line) => consoleCommand(line));
 
     process.on("SIGINT", () => shutdown());
 }

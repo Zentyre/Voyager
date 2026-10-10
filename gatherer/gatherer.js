@@ -41,7 +41,7 @@ if (config.manager) {
         const handlers = [];
         const hub = require("./lib/dashboard").startDashboard(config.dashboard, {
             names: [config.username],
-            onCommand: (target, text) => handlers.forEach((fn) => fn(text)),
+            onCommand: (target, text, opts) => handlers.forEach((fn) => fn(text, opts)),
         });
         reporter = {
             status: (s) => hub.status(s),

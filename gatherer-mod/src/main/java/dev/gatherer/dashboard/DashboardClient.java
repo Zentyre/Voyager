@@ -71,6 +71,7 @@ public class DashboardClient {
 		JsonObject body = new JsonObject();
 		body.addProperty("target", target);
 		body.addProperty("text", text);
+		body.addProperty("quiet", true); // (the bots answer here, in the log, not in chat)
 		try {
 			HttpRequest req = request("/command").header("content-type", "application/json")
 				.POST(HttpRequest.BodyPublishers.ofString(body.toString())).build();

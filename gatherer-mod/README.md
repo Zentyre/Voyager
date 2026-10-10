@@ -10,7 +10,8 @@ the bots are doing and command them. The game doesn't pause while it's open.
   and farm.
 - A box for any other command (the same as in chat, without the prefix);
   Enter sends it.
-- The log, newest at the bottom.
+- The log, newest at the bottom. The bots answer what you send from here in
+  the log, not in game chat.
 
 It talks to the dashboard Gatherer already runs on this computer
 (`GET /status`, `POST /command`), so the website keeps working as before.

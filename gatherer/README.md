@@ -117,8 +117,10 @@ Controls → Key Binds → Gatherer). It shows the bots down the left, or the
 whole crew; what the chosen one is doing, its health, food, position, job,
 queue and inventory; buttons for come, stop, status, inventory, eat, sleep,
 home, deposit, armor and farm; a box for any other command (Enter sends it);
-and the log. The game doesn't pause while it's open. The website keeps
-working as before; the mod only talks to it, on this computer.
+and the log. The game doesn't pause while it's open. Bots answer what you
+send from it in its log, not in game chat (the rest of the time they talk as
+usual). The website keeps working as before; the mod only talks to it, on
+this computer.
 
 1. Install [Fabric Loader](https://fabricmc.net/use/installer/) 0.19.5 or
    newer for 26.3, and put [Fabric API](https://modrinth.com/mod/fabric-api)
