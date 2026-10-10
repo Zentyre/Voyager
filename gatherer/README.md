@@ -100,7 +100,10 @@ hurt, disconnected, or needs a Microsoft sign-in.
 
 The bar at the top sends any command (the same ones as in chat, without the
 `!`) to one bot, all bots, or the crew (which splits gathering jobs). The
-Activity panel on the right shows what each bot is doing, live.
+Activity panel on the right shows what each bot is doing, live. The bots
+answer commands sent from here (and the jobs they start report) in the
+Activity panel only, not in game chat; commands typed in game chat are
+answered in chat as before.
 
 It only works on this computer: it doesn't listen to the network, and it
 turns away other websites open in your browser trying to send it commands.
@@ -117,10 +120,8 @@ Controls → Key Binds → Gatherer). It shows the bots down the left, or the
 whole crew; what the chosen one is doing, its health, food, position, job,
 queue and inventory; buttons for come, stop, status, inventory, eat, sleep,
 home, deposit, armor and farm; a box for any other command (Enter sends it);
-and the log. The game doesn't pause while it's open. Bots answer what you
-send from it in its log, not in game chat (the rest of the time they talk as
-usual). The website keeps working as before; the mod only talks to it, on
-this computer.
+and the log. The game doesn't pause while it's open. The website keeps
+working as before; the mod only talks to it, on this computer.
 
 1. Install [Fabric Loader](https://fabricmc.net/use/installer/) 0.19.5 or
    newer for 26.3, and put [Fabric API](https://modrinth.com/mod/fabric-api)

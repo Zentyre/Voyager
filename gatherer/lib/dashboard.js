@@ -193,12 +193,12 @@ function startDashboard(options, { onCommand, onControl = null, manager = false,
             });
             req.on("end", () => {
                 try {
-                    // `quiet` (the in-game dashboard): the bots answer in the log, not in chat.
-                    const { target, text, quiet } = JSON.parse(body);
+                    // From the page or the in-game screen: the bots answer in the log, not in chat.
+                    const { target, text } = JSON.parse(body);
                     if (typeof text !== "string" || !text.trim()) throw new Error("empty command");
                     const who = typeof target === "string" && target ? target : "auto";
                     addLog("you", `${who === "auto" ? "" : `${who}: `}${text.trim()}`);
-                    onCommand?.(who, text.trim(), { quiet: quiet === true });
+                    onCommand?.(who, text.trim(), { quiet: true });
                     res.writeHead(200, { "content-type": "application/json" });
                     res.end('{"ok":true}');
                 } catch (err) {
