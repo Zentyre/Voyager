@@ -320,12 +320,16 @@ The dashboard map shows them as small squares (hover for which and where).
 
 A watch on the pathfinder for when it stops getting anywhere: a block it's
 putting down (bridging, towering) that takes more than 8 s, the same next
-step for 12 s while not digging, or three failed steps in the same few
-blocks within 25 s (pushed off them by water, a jump it can't make, a block
-it can't place or dig). The step it kept failing on is left out of its plans
-for two minutes and it tries another way; the third time on one trip it
-gives up on getting there ("I got stuck on the way at ...") and the job
-skips that target or tries something else, rather than hang. Following or
+step for 12 s while not digging, or three failed steps over at least 5 s
+with no progress in between (nothing dug, not 3 blocks further on: pushed
+off them by water, a jump it can't make, a block it can't place or dig).
+The step it kept failing on is left out of its plans for two minutes and it
+tries another way; the third time in a row without getting anywhere it gives
+up on getting there ("I got stuck on the way at ...") and the job skips that
+target or tries something else, rather than hang. A failed step now and
+then among ones that work isn't being stuck, and neither are the few
+seconds after it replans (that stirs up a failure or two itself). When it's
+a dig that keeps failing, the log says which block and why. Following or
 fighting something that moves, it only goes another way. The log says each
 time it happens. A trip that fails while it's in the water ends with it
 getting out first (onto a bank it can climb, or digging the edge of a high

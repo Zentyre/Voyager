@@ -9,11 +9,19 @@
 // edge (on a slab, a mob in the way) it waits there for ever.
 //
 // So: a block placement taking more than 8 s, the same next step for 12 s
-// (not digging), or three failed steps in the same few blocks within 25 s,
-// and the step it kept failing on is left out of its plans for two minutes,
-// and it plans again. The third time on the
-// same trip, it gives up on it with an error (the job then skips that
-// target, or tries something else) rather than hang.
+// (not digging), or three failed steps over at least 5 s with no progress
+// in between (nothing dug, not 3 blocks further on), and the step
+// it kept failing on is left out of its plans for two minutes, and it plans
+// again. The third time in a row with no progress, it gives up on getting
+// there with an error (the job then skips that target, or tries something
+// else) rather than hang.
+//
+// (Failures alone weren't enough: on its way up a mountain, digging and
+// climbing, with the odd failed dig among them, it gave up on one emerald
+// after another within a second each. Its own replanning set off more:
+// a dig just starting when it replanned went on, and the next one cut it
+// short, which counts as a failed dig. So a few seconds after replanning
+// don't count.)
 
 const AVOID_MS = 120000;
 const PLACING_MS = 8000;
@@ -57,20 +65,40 @@ function installUnstuck(ctx, movements) {
     let path = [];
     bot.on("path_update", (r) => (path = r.path || []));
 
+    // Progress: a block dug, or a few blocks further on (towering and
+    // bridging too: a block it puts down shows before the server has said
+    // yes, so that isn't counted by itself).
+    let progressAt = 0;
+    const progress = () => (progressAt = Date.now());
+    bot.on("diggingCompleted", progress);
+    // The last dig that failed, and why (for the log).
+    let digError = null;
+    const dig = bot.dig.bind(bot);
+    bot.dig = (block, ...rest) => dig(block, ...rest).catch((err) => {
+        digError = { at: Date.now(), block, message: err?.message };
+        throw err;
+    });
+
     // Failed steps: no step reached in time, a block it couldn't place or dig.
     let failures = [];
+    let replannedAt = 0;
     bot.on("path_reset", (reason) => {
         if (!/^(stuck|place_error|dig_error)$/.test(reason) || !goal || !bot.entity) return;
         const now = Date.now();
-        const here = bot.entity.position.clone();
-        failures.push({ at: now, here, step: path[0] });
-        failures = failures.filter((f) => now - f.at < 25000);
-        const near = failures.filter((f) => f.here.distanceTo(here) < 3);
-        if (near.length < 3) return;
+        if (now - replannedAt < 3000) return; // (stirred up by its own replanning)
+        failures = failures.filter((f) => f.at > progressAt && now - f.at < 25000);
+        failures.push({ at: now, here: bot.entity.position.clone(), step: path[0] });
+        if (failures.length < 3 || now - failures[0].at < 5000) return;
+        const steps = failures.map((f) => f.step);
         failures = [];
-        const what = { stuck: "can't get to the next step", place_error: "can't put a block down", dig_error: "can't dig through" }[reason];
-        setTimeout(() => stuck(near.map((f) => f.step), what), 0); // (out of the pathfinder's own reset first)
+        setTimeout(() => stuck(steps, describe(reason)), 0); // (out of the pathfinder's own reset first)
     });
+    function describe(reason) {
+        if (reason === "stuck") return "can't get to the next step";
+        if (reason === "place_error") return "can't put a block down";
+        const e = digError && Date.now() - digError.at < 3000 ? digError : null;
+        return e ? `can't dig through the ${ctx.pretty(e.block?.name || "block")} at ${ctx.fmt(e.block?.position || bot.entity.position.floored())}: ${e.message}` : "can't dig through";
+    }
 
     // Putting a block down for longer than that; or the same next step for
     // longer than that, not digging (it waits to be standing on something
@@ -87,6 +115,7 @@ function installUnstuck(ctx, movements) {
             stepKey = null;
             return;
         }
+        if (failures.length && bot.entity.position.distanceTo(failures[0].here) >= 3) progress();
         if (pf.isBuilding()) {
             placingSince = placingSince ?? Date.now();
             if (Date.now() - placingSince >= PLACING_MS) return stuck([path[0]], "can't put a block down");
@@ -100,6 +129,7 @@ function installUnstuck(ctx, movements) {
         }
     });
 
+    let strikeAt = 0;
     function stuck(steps, why) {
         placingSince = null;
         stepSince = Date.now();
@@ -107,9 +137,12 @@ function installUnstuck(ctx, movements) {
         if (!goal || !bot.entity) return;
         for (const s of steps) if (s) avoid.set(key(s), Date.now() + AVOID_MS);
         const where = ctx.fmt(bot.entity.position.floored());
+        if (progressAt > strikeAt) strikes = 0; // (got somewhere since the last time: start counting again)
+        strikeAt = Date.now();
         // Something that moves (a mob, a player): its own loop decides; just go another way.
         if (dynamic || ++strikes < STRIKES) {
             ctx.log(`Stuck at ${where} (${why}); trying another way.`);
+            replannedAt = Date.now();
             setGoal(goal, dynamic);
             return;
         }
