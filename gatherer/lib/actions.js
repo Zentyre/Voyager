@@ -486,6 +486,7 @@ function installActions(ctx) {
         // top of the jump, once the server has seen our feet clear of it.
         for (let attempt = 0; attempt < 3; attempt++) {
             await waitUntil(() => bot.entity.onGround, 1500);
+            await ctx.centreOn?.(feet); // off-centre, the roof beside the hole stops the jump
             bot.setControlState("jump", true);
             const risen = await waitUntil(() => bot.entity.position.y > feet.y + 1.15, 1500);
             bot.setControlState("jump", false);

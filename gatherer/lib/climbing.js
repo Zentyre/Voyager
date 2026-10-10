@@ -37,7 +37,10 @@ function installClimbing(ctx, movements) {
     bot.placeBlock = async (ref, face) => {
         const spot = ref.position.plus(face);
         if (!towerStep(spot)) return placeBlock(ref, face);
-        if (inTheWay(spot)) await jumpClear(spot);
+        if (inTheWay(spot)) {
+            await centreOn(spot);
+            await jumpClear(spot);
+        }
         await bot.lookAt(ref.position.offset(0.5 + face.x * 0.5, 0.5 + face.y * 0.5, 0.5 + face.z * 0.5), true);
         const block = bot.registry.blocksByName[bot.heldItem?.name];
         const before = bot.blockAt(spot);
@@ -49,6 +52,37 @@ function installClimbing(ctx, movements) {
         placeBlock(ref, face).catch(() => {});
         await bot.waitForTicks(2); // sent
     };
+
+    // To the middle of its block before jumping straight up. More than 0.2
+    // off, part of its head is under the roof beside the hole above, and the
+    // jump goes nowhere: it dug, tried to put a block down, couldn't get up,
+    // and went round again. (The pathfinder only gets within 0.35 of a spot,
+    // and a tunnel up starts wherever it happened to stand.) Sneaking, so it
+    // can't step off an edge.
+    const offCentre = (spot) => {
+        const p = bot.entity.position;
+        return { dx: spot.x + 0.5 - p.x, dz: spot.z + 0.5 - p.z };
+    };
+    async function centreOn(spot) {
+        let { dx, dz } = offCentre(spot);
+        if (Math.abs(dx) <= 0.15 && Math.abs(dz) <= 0.15) return;
+        try {
+            for (let i = 0; i < 40 && (Math.abs(dx) > 0.1 || Math.abs(dz) > 0.1); i++) {
+                await bot.look(Math.atan2(-dx, -dz), bot.entity.pitch, true);
+                bot.setControlState("jump", false);
+                bot.setControlState("sprint", false);
+                bot.setControlState("sneak", true);
+                bot.setControlState("forward", true);
+                await bot.waitForTicks(1);
+                ({ dx, dz } = offCentre(spot));
+            }
+        } finally {
+            bot.setControlState("forward", false);
+            bot.setControlState("sneak", false);
+        }
+        await bot.waitForTicks(2); // come to a stop
+    }
+    ctx.centreOn = centreOn;
 
     // Jump (if it isn't already: the item can take a moment to get into its
     // hand, by which time it's landed again), until its feet are above the spot.

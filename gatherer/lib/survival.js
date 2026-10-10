@@ -149,14 +149,32 @@ function installSurvival(ctx) {
         return bot.registry.blocksArray.filter((b) => b.name.endsWith("_bed")).map((b) => b.name);
     }
 
-    function findBed(radius) {
+    // Which way a bed's head is from its foot.
+    const HEAD = { north: [0, -1], south: [0, 1], west: [-1, 0], east: [1, 0] };
+    // One name for both halves of a bed (where its head is), for the crew.
+    function bedKey(bed) {
+        const props = bed.getProperties?.() || {};
+        const [dx, dz] = HEAD[props.facing] || [0, 0];
+        return `bed:${props.part === "foot" ? bed.position.offset(dx, 0, dz) : bed.position}`;
+    }
+    const occupied = (bed) => String(bed?.getProperties?.().occupied) === "true";
+    // Somebody in it (a player, a villager, another bot), or another of the
+    // crew on the way to it.
+    const taken = (bed) => occupied(bed) || Boolean(ctx.crew?.claimedByOther(bedKey(bed)));
+
+    // The nearest bed it can have; `passOver`: beds (by bedKey) it found taken.
+    // `any`: the nearest bed at all, taken or not.
+    function findBed(radius, passOver = new Set(), any = false) {
+        const ok = (b) => b && b.name.endsWith("_bed") && (any || (!taken(b) && !passOver.has(bedKey(b))));
         const ids = bedNames().map((n) => bot.registry.blocksByName[n].id);
-        const near = bot.findBlock({ matching: ids, maxDistance: Math.min(radius, 64) });
-        if (near) return near;
+        for (const pos of bot.findBlocks({ matching: ids, maxDistance: Math.min(radius, 64), count: 40 })) {
+            const block = bot.blockAt(pos);
+            if (ok(block)) return block;
+        }
         // A bed we remember from before (e.g. one we placed).
         for (const spot of learn.recall("block", bedNames(), bot.entity.position, radius)) {
             const block = bot.blockAt(new ctx.Vec3(spot.x, spot.y, spot.z));
-            if (block && block.name.endsWith("_bed")) return block;
+            if (ok(block)) return block;
         }
         return null;
     }
@@ -174,45 +192,71 @@ function installSurvival(ctx) {
         }
     }
 
+    // A bed nearby, or (`getBed`) its own: one it carries, or makes, put
+    // down for the night and picked up again after. A bed that turns out to
+    // be taken when it gets there (someone got in first) is passed over for
+    // the next, or its own.
     async function goToBed({ getBed = false }) {
-        let bed = findBed(config.stationRadius * 4);
-        let ownBed = false; // put down for tonight: picked up again after
-        if (!bed && getBed) {
-            let have = bot.inventory.items().find((i) => i.name.endsWith("_bed"));
-            if (!have) {
-                const bedItems = Object.keys(bot.registry.itemsByName).filter((n) => n.endsWith("_bed"));
-                const choice = planner.cheapestOf(bedItems);
-                if (!choice || choice.cost === Infinity) throw new Error("I can't make a bed");
-                ctx.say(`Getting a ${choice.name} to sleep in.`);
-                await ctx.obtain(choice.name, 1);
-                have = bot.inventory.items().find((i) => i.name.endsWith("_bed"));
+        const radius = config.stationRadius * 4;
+        const passOver = new Set();
+        for (let tries = 0; tries < 4; tries++) {
+            let bed = findBed(radius, passOver);
+            let ownBed = false; // put down for tonight: picked up again after
+            if (!bed) {
+                const othersTaken = passOver.size > 0 || Boolean(findBed(radius, passOver, true));
+                if (!getBed) throw new Error(othersTaken ? "the beds nearby are taken" : "no bed nearby");
+                if (othersTaken) ctx.say("The beds here are taken; I'll put down my own.");
+                bed = await placeOwnBed();
+                ownBed = true;
             }
-            bed = await ctx.during("Placing a bed", () => ctx.act(() => ctx.placeNearby(have.name)));
-            ownBed = true;
+            const key = bedKey(bed);
+            ctx.crew?.claim(key, 60000);
+            sleeping = true;
+            try {
+                const half = await ctx.act(() => reachBed(bed));
+                try {
+                    await bot.sleep(bot.blockAt(half.position) || half);
+                } catch (err) {
+                    // (the server can say no before the bed shows as taken here)
+                    if (!/occupied/.test(err.message) && !occupied(bot.blockAt(half.position))) throw err;
+                    passOver.add(key);
+                    ctx.log(`Someone's in the ${ctx.pretty(bed.name)} at ${ctx.fmt(bed.position)}; trying another.`);
+                    continue;
+                }
+                ctx.say("Sleeping.");
+                learn.remember("block", bed.name, bed.position);
+                await ctx.during("Sleeping", () => new Promise((resolve) => {
+                    const done = () => {
+                        clearTimeout(timer);
+                        bot.removeListener("wake", done);
+                        resolve();
+                    };
+                    const timer = setTimeout(done, 120000);
+                    bot.once("wake", done);
+                }));
+                learn.count("nightsSlept");
+                return true;
+            } finally {
+                sleeping = false;
+                ctx.crew?.claim(key, 0);
+                if (ownBed) await pickUpBed(bed);
+            }
         }
-        if (!bed) throw new Error("no bed nearby");
+        throw new Error("every bed I tried was taken");
+    }
 
-        sleeping = true;
-        try {
-            const half = await ctx.act(() => reachBed(bed));
-            await bot.sleep(half);
-            ctx.say("Sleeping.");
-            learn.remember("block", bed.name, bed.position);
-            await ctx.during("Sleeping", () => new Promise((resolve) => {
-                const done = () => {
-                    clearTimeout(timer);
-                    bot.removeListener("wake", done);
-                    resolve();
-                };
-                const timer = setTimeout(done, 120000);
-                bot.once("wake", done);
-            }));
-            learn.count("nightsSlept");
-            return true;
-        } finally {
-            sleeping = false;
-            if (ownBed) await pickUpBed(bed);
+    // Put down a bed of its own (making one if it has none).
+    async function placeOwnBed() {
+        let have = bot.inventory.items().find((i) => i.name.endsWith("_bed"));
+        if (!have) {
+            const bedItems = Object.keys(bot.registry.itemsByName).filter((n) => n.endsWith("_bed"));
+            const choice = planner.cheapestOf(bedItems);
+            if (!choice || choice.cost === Infinity) throw new Error("I can't make a bed");
+            ctx.say(`Getting a ${choice.name} to sleep in.`);
+            await ctx.obtain(choice.name, 1);
+            have = bot.inventory.items().find((i) => i.name.endsWith("_bed"));
         }
+        return ctx.during("Placing a bed", () => ctx.act(() => ctx.placeNearby(have.name)));
     }
 
     // Break the bed it put down and take it along again.
