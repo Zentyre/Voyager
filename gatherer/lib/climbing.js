@@ -152,15 +152,23 @@ function installClimbing(ctx, movements) {
     }
 
     // Before going anywhere well above from underground: straight up first.
+    // Not if it's been told to leave that to the pathfinder for a while
+    // (ctx.noTunnelUntil: going round in circles with it, see unstuck.js).
+    // Each trip has a number, and a tunnel stops as soon as a newer trip
+    // starts: one that timed out went on digging and putting blocks down
+    // while the pathfinder took it somewhere else.
     const goto = bot.pathfinder.goto.bind(bot.pathfinder);
+    let trips = 0;
     bot.pathfinder.goto = async (goal, ...rest) => {
+        const trip = ++trips;
         const upTo = tunnelTarget(goal);
-        if (upTo !== null && upTo - bot.entity.position.y >= 3 && boxedIn()) {
+        if (upTo !== null && upTo - bot.entity.position.y >= 3 && Date.now() >= (ctx.noTunnelUntil || 0) && boxedIn()) {
             const before = ctx.interrupts;
-            await tunnelUp(upTo).catch((err) => {
+            await tunnelUp(upTo, () => trip === trips).catch((err) => {
                 if (err instanceof ctx.Stopped || ctx.interrupts !== before) throw err;
                 ctx.log(`Stopped tunnelling up: ${err.message}.`);
             });
+            if (trip !== trips) throw new Error("a newer trip took over");
         }
         return goto(goal, ...rest);
     };
@@ -181,12 +189,15 @@ function installClimbing(ctx, movements) {
     }
 
     const solid = (b) => Boolean(b) && b.boundingBox === "block" && !LEAVES.test(b.name);
-    // Rock above the head, or a shaft (rock all round at head height), with no daylight.
+    // Rock above the head, or a shaft (rock all round at head height), with
+    // no daylight. (A pit open to the sky counted too: there it built a
+    // pillar of dirt that the pathfinder then dug back out, and round again.
+    // In the open the pathfinder climbs well enough itself.)
     function boxedIn() {
         if (!bot.entity.onGround || bot.entity.isInWater) return false;
         const feet = bot.entity.position.floored();
         const head = bot.blockAt(feet.offset(0, 1, 0));
-        if (head?.skyLight > 0 && !shaft(feet)) return false;
+        if (head?.skyLight > 0) return false;
         return solid(bot.blockAt(feet.offset(0, 2, 0))) || shaft(feet);
     }
     function shaft(feet) {
@@ -197,7 +208,7 @@ function installClimbing(ctx, movements) {
     // up to feet height `toY`, or out in the open. Anything it can't do
     // safely (water or lava next to it, gravel above, no blocks to place)
     // is left to the pathfinder.
-    async function tunnelUp(toY) {
+    async function tunnelUp(toY, current = () => true) {
         const before = ctx.interrupts;
         const from = bot.entity.position.floored().y;
         let said = false;
@@ -205,6 +216,7 @@ function installClimbing(ctx, movements) {
             while (bot.entity.position.y < toY) {
                 ctx.checkStop();
                 if (ctx.interrupts !== before) throw new Error("interrupted");
+                if (!current()) break; // a newer trip took over
                 const feet = bot.entity.position.floored();
                 const above = movements.getBlock(feet, 0, 2, 0);
                 const dig = solid(above);

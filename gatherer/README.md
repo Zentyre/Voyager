@@ -245,7 +245,7 @@ coordinate. Each keeps its own memory file (`memory/<username>.json`) either way
 |------------|-------------------------------------------------------------------------------------------|
 | **Mine**   | Finds the nearest natural block that drops the item, digs to it, and picks up the drop. Goes back to places it remembers, or explores. Prefers blocks near its own height. For one out of reach overhead (a treetop), it gets dirt, builds a pillar up, takes what's in reach, knocks drops off the leaves, and digs the pillar back down. Gives up on any block after a time limit and moves on. |
 | **Run**    | Sprint-jumps on straight, flat stretches when it travels, as players do: about 7 blocks a second instead of 5.6 (a 69-block run took 10.0 s instead of 12.3). Only where it's safe: level ground, nothing to dig or place, room above its head, not on ice or slime, lined up with its path. `"sprintJump": false` turns it off (it uses a little more food). |
-| **Climb**  | Out of holes and up cliffs, it does whichever is quicker: dig a staircase, put blocks under itself (dirt or cobblestone), or walk round. Underground, heading back up to the surface, it tunnels straight up with a block under itself at each step instead of a staircase (one block dug a step, not three); it leaves that to the pathfinder next to water, lava or gravel. Towering works the way a player does it: it steps to the middle of its block first (off-centre, its head catches the roof beside the hole and it can't jump), and lands on the block it put down without waiting for the server's answer, so lag doesn't make it fall back into the spot. If the server keeps refusing tower blocks, after three it climbs other ways for a minute. |
+| **Climb**  | Out of holes and up cliffs, it does whichever is quicker: dig a staircase, put blocks under itself (dirt or cobblestone), or walk round. Underground (no daylight overhead), heading back up to the surface, it tunnels straight up with a block under itself at each step instead of a staircase (one block dug a step, not three); it leaves that to the pathfinder next to water, lava or gravel, in a pit open to the sky, and once a newer trip has started. Towering works the way a player does it: it steps to the middle of its block first (off-centre, its head catches the roof beside the hole and it can't jump), and lands on the block it put down without waiting for the server's answer, so lag doesn't make it fall back into the spot. If the server keeps refusing tower blocks, after three it climbs other ways for a minute. |
 | **Craft**  | Uses the game's recipe list. Gathers ingredients recursively and places a crafting table if none is nearby. |
 | **Plans ahead** | When it goes out to mine, hunt, farm or smelt something, it also gets what the tasks still in the queue will need of it, as far as its bag has room: `!armor diamond` mines all 24 diamonds in one trip, then crafts the four pieces. |
 | **Tools**  | If a block needs a better pickaxe than it has, it makes one first (wood → stone → iron). |
@@ -333,7 +333,11 @@ up on getting there ("I got stuck on the way at ...") and the job skips that
 target or tries something else, rather than hang. A failed step now and
 then among ones that work isn't being stuck, and neither are the few
 seconds after it replans (that stirs up a failure or two itself). When it's
-a dig that keeps failing, the log says which block and why. Following or
+a dig that keeps failing, the log says which block and why. Going round in
+circles counts as stuck however busy it looks: putting a block down and
+digging it out again, twice over at the same spot, and that spot is left
+alone (no placing, digging or standing there) for two minutes, with no
+tunnelling straight up meanwhile ("Going round in circles ..."). Following or
 fighting something that moves, it only goes another way. The log says each
 time it happens. A trip that fails while it's in the water ends with it
 getting out first (onto a bank it can climb, or digging the edge of a high

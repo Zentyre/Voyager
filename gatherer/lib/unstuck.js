@@ -22,6 +22,13 @@
 // a dig just starting when it replanned went on, and the next one cut it
 // short, which counts as a failed dig. So a few seconds after replanning
 // don't count.)
+//
+// And going round in circles: putting a block somewhere and digging it out
+// again, twice over at the same spot (a pillar it built and the pathfinder
+// dug back out, a step it put down and then had to dig away, ...), is stuck
+// too, however busy it looks; digging out its own block isn't progress.
+// That spot is then left alone (no putting a block there, digging there or
+// standing there) for two minutes, and no tunnelling straight up meanwhile.
 
 const AVOID_MS = 120000;
 const PLACING_MS = 8000;
@@ -45,6 +52,7 @@ function installUnstuck(ctx, movements) {
     };
     movements.exclusionAreasStep.push(avoided);
     movements.exclusionAreasPlace.push(avoided);
+    movements.exclusionAreasBreak.push(avoided);
 
     // The goal, and whether it moves (a mob, a player): the pathfinder keeps neither where we can see.
     let goal = null;
@@ -70,14 +78,52 @@ function installUnstuck(ctx, movements) {
     // yes, so that isn't counted by itself).
     let progressAt = 0;
     const progress = () => (progressAt = Date.now());
-    bot.on("diggingCompleted", progress);
+    // What it put down and dug out where, lately (key -> times).
+    const touched = new Map();
+    const note = (pos, what) => {
+        const k = key(pos.floored ? pos.floored() : pos);
+        const now = Date.now();
+        const t = (touched.get(k) || []).filter((e) => now - e.at < 60000);
+        t.push({ at: now, what });
+        touched.set(k, t);
+        if (touched.size > 500) touched.delete(touched.keys().next().value);
+        return t;
+    };
+    const placedHere = (pos) => (touched.get(key(pos)) || []).some((e) => e.what === "placed" && Date.now() - e.at < 60000);
+    bot.on("diggingCompleted", (block) => {
+        // (its own block dug out again is undoing, not getting anywhere)
+        if (!block?.position || !placedHere(block.position)) progress();
+    });
+    const placeBlock = bot.placeBlock.bind(bot);
+    bot.placeBlock = (ref, face, ...rest) => {
+        if (ref?.position && face) circles(note(ref.position.plus(face), "placed"), ref.position.plus(face));
+        return placeBlock(ref, face, ...rest);
+    };
     // The last dig that failed, and why (for the log).
     let digError = null;
     const dig = bot.dig.bind(bot);
-    bot.dig = (block, ...rest) => dig(block, ...rest).catch((err) => {
-        digError = { at: Date.now(), block, message: err?.message };
-        throw err;
-    });
+    bot.dig = (block, ...rest) => {
+        const wasPlaced = block?.position && placedHere(block.position);
+        return dig(block, ...rest).then(
+            (done) => {
+                if (wasPlaced) circles(note(block.position, "dug"), block.position);
+                return done;
+            },
+            (err) => {
+                digError = { at: Date.now(), block, message: err?.message };
+                throw err;
+            }
+        );
+    };
+    // Put down and dug out twice over at one spot: going round in circles.
+    function circles(t, pos) {
+        const placed = t.filter((e) => e.what === "placed").length;
+        const dug = t.filter((e) => e.what === "dug").length;
+        if (placed < 2 || dug < 2) return;
+        touched.delete(key(pos));
+        ctx.noTunnelUntil = Date.now() + AVOID_MS;
+        setTimeout(() => stuck([pos], `going round in circles, putting a block at ${ctx.fmt(pos)} and digging it out again`), 0);
+    }
 
     // Failed steps: no step reached in time, a block it couldn't place or dig.
     let failures = [];
@@ -134,8 +180,11 @@ function installUnstuck(ctx, movements) {
         placingSince = null;
         stepSince = Date.now();
         failures = [];
-        if (!goal || !bot.entity) return;
         for (const s of steps) if (s) avoid.set(key(s), Date.now() + AVOID_MS);
+        if (!goal || !bot.entity) {
+            if (/circles/.test(why)) ctx.log(`Going round in circles (${why.replace(/^going round in circles, /, "")}); leaving that spot alone.`);
+            return;
+        }
         const where = ctx.fmt(bot.entity.position.floored());
         if (progressAt > strikeAt) strikes = 0; // (got somewhere since the last time: start counting again)
         strikeAt = Date.now();
