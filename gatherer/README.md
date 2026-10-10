@@ -102,11 +102,34 @@ The bar at the top sends any command (the same ones as in chat, without the
 `!`) to one bot, all bots, or the crew (which splits gathering jobs). The
 Activity panel on the right shows what each bot is doing, live.
 
-It only accepts connections from this computer. To open it from your phone
-on the same Wi-Fi, set `"dashboard": { "port": 3000, "host": "0.0.0.0" }` in
-`config.json`: the console then prints a link with an access token. Anyone
-with that link can command the bots, so don't share it. `"dashboard": false`
-turns it off.
+It only accepts connections from this computer. `"dashboard": false` turns
+it off.
+
+**From your phone or another computer.** The safe way, and one that works on
+any network (college or work Wi-Fi often stops devices on it reaching each
+other, and you never open a port to the internet), is
+[Tailscale](https://tailscale.com): a free private network between your own
+devices.
+
+1. Install Tailscale on the computer running the bots and on your phone (and
+   any other computer), and sign in to the same account on each.
+2. In `config.json`: `"dashboard": { "port": 3000, "host": "0.0.0.0" }`.
+3. Start the bots. The console prints the link with an access token:
+   `http://<this computer's IP>:3000/?token=...`. Use the computer's Tailscale
+   address (in the Tailscale app, `100.x.y.z`) as the IP.
+4. Open that link once on each device; it remembers the token. Bookmark
+   `http://100.x.y.z:3000/` after that.
+
+Without the token the dashboard turns everyone away. The token is made once
+and kept in `memory/dashboard-token.txt` (delete the file for a new one, which
+logs every device out), or set your own: `"token": "..."` in `"dashboard"`.
+Anyone with the link can command the bots, so don't share it. Don't open the
+port on a router instead: the dashboard is plain HTTP, so the token could be
+read on the way.
+
+`GET /status` (JSON) and `POST /command` (`{ "target": "Alpha", "text":
+"come" }`) are there for scripts, with the token as `?token=` or an `X-Token`
+header.
 
 ## Accounts (online-mode servers)
 

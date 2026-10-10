@@ -4,7 +4,13 @@
 //
 // It only listens on this computer unless "dashboard.host" is changed. Then a
 // token is required (printed at startup), since anyone who can open the page
-// can command the bots.
+// can command the bots: "dashboard.token" if set, else one made once and kept
+// in memory/dashboard-token.txt, so devices that have opened the link stay in
+// across restarts.
+//
+// GET /status gives the same as the page sees, as plain JSON (for the in-game
+// screen mod, and scripts); POST /command sends one. Both take the token as
+// ?token= or an X-Token header too.
 
 const fs = require("fs");
 const http = require("http");
@@ -19,7 +25,7 @@ const MAX_SCHEMATIC = 50 * 1024 * 1024;
 function startDashboard(options, { onCommand, onControl = null, manager = false, names = [] } = {}) {
     const settings = { port: 3000, host: "127.0.0.1", ...(typeof options === "object" ? options : {}) };
     const local = ["127.0.0.1", "localhost", "::1"].includes(settings.host);
-    const token = local ? null : settings.token || crypto.randomBytes(9).toString("base64url");
+    const token = local ? null : settings.token || keptToken();
 
     const bots = new Map(); // label -> latest status
     const logs = []; // { t, bot, text }
@@ -70,6 +76,24 @@ function startDashboard(options, { onCommand, onControl = null, manager = false,
         return skins.get(hash);
     }
 
+    function keptToken() {
+        const file = path.join(__dirname, "..", "memory", "dashboard-token.txt");
+        try {
+            const kept = fs.readFileSync(file, "utf8").trim();
+            if (kept) return kept;
+        } catch (err) {
+            // none yet
+        }
+        const made = crypto.randomBytes(12).toString("base64url");
+        try {
+            fs.mkdirSync(path.dirname(file), { recursive: true });
+            fs.writeFileSync(file, made);
+        } catch (err) {
+            console.log(`[dashboard] Couldn't save the access token (${err.message}); it'll change next start.`);
+        }
+        return made;
+    }
+
     const server = http.createServer((req, res) => {
         const url = new URL(req.url, "http://localhost");
         if (!authorized(req, url)) {
@@ -92,6 +116,10 @@ function startDashboard(options, { onCommand, onControl = null, manager = false,
                 clients.delete(res);
             });
             return;
+        }
+        if (req.method === "GET" && url.pathname === "/status") {
+            res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+            return res.end(JSON.stringify({ bots: [...bots.values()], logs: logs.slice(-Math.min(200, Number(url.searchParams.get("logs")) || 30)), manager: Boolean(onControl) }));
         }
         const skinPath = /^\/skin\/([0-9a-f]{16,80})$/.exec(url.pathname);
         if (req.method === "GET" && skinPath) {
