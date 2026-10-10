@@ -23,8 +23,9 @@ const { createLearning } = require("./learning");
 const { installArchery } = require("./archery");
 const { installBodyguard } = require("./bodyguard");
 const { installBuilding } = require("./building");
-const { installSwimming } = require("./swimming");
+const { installSwimming, addWaterExits } = require("./swimming");
 const { installClimbing } = require("./climbing");
+const { installUnstuck } = require("./unstuck");
 const { installSpin } = require("./spin");
 const { installSprintJump } = require("./sprinting");
 const { createProfiles } = require("./profiles");
@@ -198,6 +199,8 @@ function createBot(config, crew, reporter) {
             return safeToBreak(block);
         };
         installClimbing(ctx, movements);
+        addWaterExits(movements);
+        installUnstuck(ctx, movements); // last: its goto is the outermost
         bot.pathfinder.setMovements(movements);
         installSprintJump(ctx); // after the pathfinder's own tick handler, so it gets the last word on jump
         bot.pathfinder.thinkTimeout = 10000;

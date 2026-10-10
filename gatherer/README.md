@@ -301,7 +301,27 @@ The dashboard map shows them as small squares (hover for which and where).
 - Left idle in deep water it keeps its head up, then swims to where it can
   climb out (a bank no higher than the water). If every bank is a block too
   high, it digs the edge of the nearest one down and climbs out there.
-- Paths prefer land and bridges to long swims.
+- Paths prefer land and bridges to long swims. Swimming, it keeps to the top
+  of the water (its planned steps go there too, so it doesn't keep turning
+  back for one it passed over), climbs out where the bank is level with the
+  top of the water, and can make its way upstream against a current. A bank
+  a block higher can't be climbed straight out of (in the game either): it
+  goes along to a lower place, or digs the edge down.
+
+## Getting unstuck
+
+A watch on the pathfinder for when it stops getting anywhere: a block it's
+putting down (bridging, towering) that takes more than 8 s, the same next
+step for 12 s while not digging, or three failed steps in the same few
+blocks within 25 s (pushed off them by water, a jump it can't make, a block
+it can't place or dig). The step it kept failing on is left out of its plans
+for two minutes and it tries another way; the third time on one trip it
+gives up on getting there ("I got stuck on the way at ...") and the job
+skips that target or tries something else, rather than hang. Following or
+fighting something that moves, it only goes another way. The log says each
+time it happens. A trip that fails while it's in the water ends with it
+getting out first (onto a bank it can climb, or digging the edge of a high
+one down) rather than trying the next thing from the river.
 
 ## How it learns (no LLM)
 
@@ -551,6 +571,7 @@ with its progress and what's still to place (what it has and what's in chests).
 | `lib/building.js`   | Builder: materials from chests, placing with the right facing, towers |
 | `lib/swimming.js`   | Water: air, swimming up, diving, getting out                |
 | `lib/climbing.js`   | Getting up: towers, tunnelling straight up                |
+| `lib/unstuck.js`    | Noticing it's stuck, and going another way                |
 | `lib/sprinting.js`  | Sprint-jumping on straight runs                           |
 | `lib/spin.js`       | Spinning round a player, spaced out with the rest of the crew |
 | `lib/chests.js`     | The unload chest set in game (`setchest`)                 |

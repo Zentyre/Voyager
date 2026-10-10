@@ -99,11 +99,34 @@ function installSwimming(ctx) {
         // Swimming down, as a player does holding sneak (the physics here has no such thing).
         if (diving && bot.entity.isInWater) bot.entity.velocity.y -= 0.04;
 
-        // Diving: let it sink towards a goal below (the pathfinder would hold jump).
+        // Diving: let it sink towards a goal just below (the pathfinder would
+        // hold jump). Only one close by: for one further off that's merely
+        // lower (past a river), it sank to the bottom on the way and couldn't
+        // get up the far bank.
         if (bot.entity.isInWater && bot.pathfinder.isMoving()) {
             const goal = bot.pathfinder.goal;
-            const goalY = goal?.y ?? goal?.pos?.y;
-            if (goalY !== undefined && bot.entity.position.y > goalY + 0.5) bot.setControlState("jump", false);
+            const g = goal?.pos ?? goal;
+            const p = bot.entity.position;
+            const below = Number.isFinite(g?.y) && Number.isFinite(g?.x) && Number.isFinite(g?.z) && p.y > g.y + 0.5;
+            if (below && Math.hypot(g.x + 0.5 - p.x, g.z + 0.5 - p.z) < 3) bot.setControlState("jump", false);
+        }
+    });
+
+    // The pathfinder plans through deep water at the level it went in at, a
+    // block or more under the top, but the bot (holding jump) swims at the
+    // top. More than a block above a step, it never counted it reached: it
+    // went past, turned back for it, past again, while any current carried
+    // it off downstream. So steps in deep water go up to the top of it (as
+    // copies: the pathfinder's own may still be in its search). Not the last
+    // one: that may be something on the bottom it's diving for.
+    bot.on("path_update", (r) => {
+        const path = r.path;
+        for (let i = 0; path && i < path.length - 1; i++) {
+            const n = path[i];
+            if (n.toBreak?.length || n.toPlace?.length) continue;
+            let y = n.y;
+            while (y < n.y + 8 && watery(bot.blockAt(new Vec3(n.x, y, n.z))) && watery(bot.blockAt(new Vec3(n.x, y + 1, n.z)))) y++;
+            if (y !== n.y) path[i] = Object.assign(Object.create(Object.getPrototypeOf(n)), n, { y });
         }
     });
 
@@ -272,7 +295,7 @@ function installSwimming(ctx) {
         try {
             while (Date.now() - start < ms) {
                 if (!wet() && bot.entity.onGround) return true;
-                if (ctx.shortOfAir()) return false;
+                if (ctx.shortOfAir() || bot.pathfinder.goal) return false; // (something else is taking it somewhere)
                 const p = bot.entity.position;
                 const dx = spot.x + 0.5 - p.x, dz = spot.z + 0.5 - p.z;
                 if (Math.hypot(dx, dz) < 0.3 && !wet()) return true;
@@ -291,8 +314,13 @@ function installSwimming(ctx) {
     // Idle and still in deep water after a few seconds: swim to the nearest
     // place it can climb out (where the bank isn't above the water). If the
     // banks are all a block too high, dig the edge of the nearest one down.
-    async function getOutOfWater() {
-        if (surfacing || ctx.busy || !wet() || inWaterSince === null || Date.now() - inWaterSince < 4000) return;
+    // (`evenIfBusy`: a job's trip that failed in the water, straight away.)
+    async function getOutOfWater({ evenIfBusy = false } = {}) {
+        // (not while the pathfinder is taking it somewhere: both steering, it
+        // was turned to the bank every other tick and swam neither way, while
+        // any current carried it off; ".home" and the like aren't "busy")
+        if (surfacing || bot.pathfinder.goal || !wet() || inWaterSince === null) return;
+        if (!evenIfBusy && (ctx.busy || Date.now() - inWaterSince < 4000)) return;
         const me = bot.entity.position.floored();
         const top = surfaceY();
         let low = null, high = null;
@@ -303,6 +331,8 @@ function installSwimming(ctx) {
                     const ground = bot.blockAt(p.offset(0, -1, 0));
                     if (!ground || ground.boundingBox !== "block" || watery(ground)) continue;
                     if (!dry(bot.blockAt(p)) || !dry(bot.blockAt(p.offset(0, 1, 0)))) continue;
+                    // at the water's edge (not a spot behind a bank: it swam into the bank)
+                    if (!SIDES.some(([sx, sz]) => watery(bot.blockAt(p.offset(sx, -1, sz))) || watery(bot.blockAt(p.offset(sx, -2, sz))))) continue;
                     const d = Math.hypot(dx, dz);
                     if (y <= top + 1) {
                         if (!low || d < low.d) low = { p, d };
@@ -406,4 +436,47 @@ function installSwimming(ctx) {
     Object.assign(ctx, { breathe, getOutOfWater, headUnderwater: headUnder, isUnderwater, diveTo });
 }
 
-module.exports = { installSwimming };
+// The pathfinder can't plan getting out of water up onto a bank: "can't
+// jump from water", so it only leaves where the shore slopes in level with
+// it. A river with a bank a block high was a trap: it planned in, couldn't
+// plan out, and swam about (pushed by any current) replanning. A player
+// swims at the bank holding jump and climbs out (the game boosts you up
+// when you swim into a wall at the top of the water), and the bot's physics
+// does the same; this adds that move: from water onto ground beside it
+// level with the top of the water, with room to come up.
+const Move = require("mineflayer-pathfinder/lib/move");
+const SIDES = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+function addWaterExits(movements) {
+    const isWater = (b) => Boolean(b?.name) && (/^(water|bubble_column)$/.test(b.name) || String(b.getProperties?.().waterlogged) === "true");
+    const getNeighbors = movements.getNeighbors.bind(movements);
+    movements.getNeighbors = (node) => {
+        const neighbors = getNeighbors(node);
+        if (!isWater(movements.getBlock(node, 0, 0, 0))) return neighbors;
+        // the top of the water here, and air over it to come up into
+        let top = 0;
+        while (top < 3 && isWater(movements.getBlock(node, 0, top + 1, 0))) top++;
+        if (top === 3) return neighbors; // too deep under: swim up first
+        const over = (dy) => {
+            const b = movements.getBlock(node, 0, dy, 0);
+            return b.safe && !b.liquid;
+        };
+        if (!over(top + 1)) return neighbors;
+        // Onto ground level with the top of the water. (Not a block higher:
+        // the boost only lifts it about half a block clear of the water, in
+        // the game as here; it tried, fell back, and tried again.)
+        const up = top + 1;
+        if (!over(up + 1)) return neighbors;
+        for (const [dx, dz] of SIDES) {
+            const ground = movements.getBlock(node, dx, up - 1, dz);
+            const feet = movements.getBlock(node, dx, up, dz);
+            const head = movements.getBlock(node, dx, up + 1, dz);
+            if (!ground.physical || ground.liquid || !feet.safe || feet.liquid || !head.safe || head.liquid) continue;
+            const cost = 2 + movements.liquidCost + (up - 1) + movements.exclusionStep(feet);
+            if (cost < 100) neighbors.push(new Move(node.x + dx, node.y + up, node.z + dz, node.remainingBlocks, cost, [], []));
+        }
+        return neighbors;
+    };
+}
+
+module.exports = { installSwimming, addWaterExits };
