@@ -95,14 +95,16 @@ function installActions(ctx) {
                 continue;
             }
 
+            let tooDeep = 0; // left out for the water over them
             const candidates = () => bot
                 .findBlocks({
                     matching: harvestable.map((b) => b.id),
                     maxDistance: config.searchRadius,
-                    count: spawnProtected ? 4096 : 64, // the nearest may all be in spawn protection
+                    count: spawnProtected ? 4096 : 256, // the nearest may all be in spawn protection, or deep under water
                 })
                 .filter((p) => !skipped.has(p.toString()) && !isProtected(p) && !learn.isUnreachable(p))
-                .filter((p) => !ctx.crew?.claimedByOther(`block:${p}`));
+                .filter((p) => !ctx.crew?.claimedByOther(`block:${p}`))
+                .filter((p) => !(ctx.tooDeepToDive?.(p) && ++tooDeep)); // more water over it than one breath allows
             const positions = candidates();
             // Prefer blocks near our own height: the top of a tree whose trunk
             // is gone looks close but can't be reached without building up.
@@ -111,18 +113,24 @@ function installActions(ctx) {
             const me = bot.entity.position;
             // Dirt and sand: take it from the top rather than digging a pit.
             const below = /_(log|stem)$/.test(name) ? 4 : /^(dirt|grass_block|sand|red_sand|gravel|clay)$/.test(name) ? 1 : null;
+            // Under water is slow going (swim out, dive, dig at a fifth of the speed): rather dry land.
+            const wetness = (p) => {
+                const w = ctx.waterOver?.(p) || 0;
+                return w ? 6 + 3 * w : 0;
+            };
             const effort = (p) =>
-                p.distanceTo(me) + 3 * Math.max(0, p.y - me.y - 2) + (below === null ? 0 : 6 * Math.max(0, me.y - p.y - below));
+                p.distanceTo(me) + 3 * Math.max(0, p.y - me.y - 2) + (below === null ? 0 : 6 * Math.max(0, me.y - p.y - below)) + wetness(p);
             positions.sort((a, b) => effort(a) - effort(b));
             if (lastExplore) {
                 learn.reward(lastExplore.context, lastExplore.arm, positions.length > 0 ? 1 : 0);
                 lastExplore = null;
             }
             if (positions.length === 0) {
+                const deep = tooDeep ? ` (only under water too deep to dive for)` : "";
                 if (++exploreAttempts > config.maxExploreAttempts) {
-                    throw new Error(`couldn't find any ${name} nearby`);
+                    throw new Error(`couldn't find any ${name} nearby${deep}`);
                 }
-                ctx.log(`No ${name} source in range, exploring (${exploreAttempts}/${config.maxExploreAttempts}).`);
+                ctx.log(`No ${name} source in range${deep}, exploring (${exploreAttempts}/${config.maxExploreAttempts}).`);
                 ctx.doing(`Looking for ${ctx.pretty(name)} (${exploreAttempts}/${config.maxExploreAttempts})`);
                 lastExplore = await exploreAndReplan(seen, "block", harvestable.map((b) => b.name), candidates);
                 continue;
@@ -268,7 +276,7 @@ function installActions(ctx) {
     let swinging = null;
     async function swingAt(block) {
         const pos = block.position;
-        const eye = bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0);
+        const eye = bot.entity.position.offset(0, bot.entity.eyeHeight ?? 1.62, 0);
         const d = eye.minus(pos.offset(0.5, 0.5, 0.5));
         const ax = Math.abs(d.x), ay = Math.abs(d.y), az = Math.abs(d.z);
         // faces: 0 down, 1 up, 2 north (-z), 3 south (+z), 4 west (-x), 5 east (+x)
@@ -362,7 +370,7 @@ function installActions(ctx) {
 
     // Pillar up with dirt until `block` is within reach, then break it.
     async function climbTo(block, seen) {
-        const reach = () => bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0).distanceTo(block.position.offset(0.5, 0.5, 0.5));
+        const reach = () => bot.entity.position.offset(0, bot.entity.eyeHeight ?? 1.62, 0).distanceTo(block.position.offset(0.5, 0.5, 0.5));
         const needed = Math.min(20, Math.ceil(block.position.y - bot.entity.position.y));
         if (scaffoldCount() < needed) {
             ctx.log(`Can't reach the ${block.name} at ${ctx.fmt(block.position)}; getting dirt to build up to it.`);
@@ -419,7 +427,7 @@ function installActions(ctx) {
     async function digInReach(type) {
         for (let i = 0; i < 12; i++) {
             ctx.checkStop();
-            const eye = bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0);
+            const eye = bot.entity.position.offset(0, bot.entity.eyeHeight ?? 1.62, 0);
             const next = bot
                 .findBlocks({ matching: type, maxDistance: 6, count: 20 })
                 .filter((pos) => eye.distanceTo(pos.offset(0.5, 0.5, 0.5)) <= 4.3)
@@ -436,7 +444,7 @@ function installActions(ctx) {
         await ctx.wait(500); // let the drops appear
         for (let i = 0; i < 8; i++) {
             ctx.checkStop();
-            const eye = bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0);
+            const eye = bot.entity.position.offset(0, bot.entity.eyeHeight ?? 1.62, 0);
             const under = Object.values(bot.entities)
                 .filter((e) => e.name === "item" && e.isValid !== false && e.position.distanceTo(eye) < 6)
                 .map((e) => bot.blockAt(e.position.offset(0, -0.3, 0).floored()))
@@ -548,7 +556,7 @@ function installActions(ctx) {
         const flat = () => Math.hypot(drop.position.x - bot.entity.position.x, drop.position.z - bot.entity.position.z);
         if (drop.isValid && bot.entities[drop.id] && flat() > 0.4) {
             try {
-                await bot.lookAt(drop.position.offset(0, bot.entity.height ?? 1.62, 0), true);
+                await bot.lookAt(drop.position.offset(0, bot.entity.eyeHeight ?? 1.62, 0), true);
                 bot.setControlState("forward", true);
                 await waitUntil(() => !bot.entities[drop.id] || flat() < 0.4, 1500);
             } finally {
@@ -652,7 +660,8 @@ function installActions(ctx) {
             const spotted = await ctx.during(`Heading to where I saw ${ctx.pretty(spot.name)} before (${spot.x} ${spot.z})`, () =>
                 ctx.safely(() => walkLooking(goal, 120000, kind, names, usable))
             );
-            if (!spotted && !sourcesInView(kind, names)) learn.forget(kind, names, new Vec3(spot.x, spot.y, spot.z));
+            const there = usable ? usable().length > 0 : sourcesInView(kind, names); // (none it can use, e.g. all too deep under water)
+            if (!spotted && !there) learn.forget(kind, names, new Vec3(spot.x, spot.y, spot.z));
             return null;
         }
 

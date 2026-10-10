@@ -47,7 +47,7 @@ function installCombat(ctx) {
     const attackReach = () => Math.min(5.5, Math.max(2, Number(config.attackReach) || REACH));
     // From the bot's eyes to the nearest point of the mob's hitbox.
     function reachTo(mob) {
-        const eye = bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0);
+        const eye = bot.entity.position.offset(0, bot.entity.eyeHeight ?? 1.62, 0);
         const w = (mob.width ?? 0.6) / 2, h = mob.height ?? 1.8, p = mob.position;
         const near = new Vec3(
             Math.max(p.x - w, Math.min(eye.x, p.x + w)),
@@ -410,7 +410,7 @@ function installCombat(ctx) {
         bot.pathfinder.setGoal(null);
         const me = bot.entity.position;
         const dir = escapeDirection(mob);
-        await bot.lookAt(me.offset(dir.x * 5, bot.entity.height ?? 1.62, dir.z * 5), true);
+        await bot.lookAt(me.offset(dir.x * 5, bot.entity.eyeHeight ?? 1.62, dir.z * 5), true);
         bot.setControlState("forward", true);
         bot.setControlState("sprint", true);
         bot.setControlState("jump", true);

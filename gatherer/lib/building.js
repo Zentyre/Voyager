@@ -402,7 +402,7 @@ function installBuilding(ctx) {
 
     // ---------- moving and placing ----------
 
-    const reachOf = (pos) => bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0).distanceTo(pos.offset(0.5, 0.5, 0.5));
+    const reachOf = (pos) => bot.entity.position.offset(0, bot.entity.eyeHeight ?? 1.62, 0).distanceTo(pos.offset(0.5, 0.5, 0.5));
     const passable = (b) => b && (b.boundingBox === "empty" || REPLACEABLE.test(b.name)) && !/^(water|lava)$/.test(b.name);
 
     // Somewhere within reach of `pos`, but not in its way. Too high to reach

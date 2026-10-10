@@ -190,6 +190,7 @@ function createBot(config, crew, reporter) {
         // that opens a pen as much as breaking it.
         const safeToBreak = movements.safeToBreak.bind(movements);
         movements.safeToBreak = (block) => {
+            if (!block?.position) return safeToBreak(block); // not loaded yet: the pathfinder's stand-in (no)
             for (let dy = 1; dy <= 3; dy++) {
                 const above = bot.blockAt(block.position.offset(0, dy, 0), false);
                 if (above && movements.fences.has(above.type)) return false;

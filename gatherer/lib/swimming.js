@@ -7,6 +7,16 @@
 // - Diving: the pathfinder holds "jump" all the time in water, so the bot
 //   could never get down to a block or spot under water. When its goal is
 //   below, let it sink.
+// - Never a dive it can't come back from: down, the digging and back up
+//   must fit in one breath with time to spare, or the block is left for
+//   one on land or in shallower water. A dive starts with full air.
+// - The air alarm takes over at once and keeps at it until the bot is up,
+//   whatever job it was on (it used to warn once and wait for the job to
+//   notice; a job that went straight on to something else under water, like
+//   picking up drops, could drown it). Walking waits until it's up. Under
+//   something (ice, a cave roof) the alarm goes off in time to get out that
+//   way: it breaks through if that's quick, or swims through the water to
+//   the nearest gap.
 
 const { goals } = require("mineflayer-pathfinder");
 const { Vec3 } = require("vec3");
@@ -18,7 +28,7 @@ function installSwimming(ctx) {
 
     const watery = (b) => Boolean(b) && (WATERY.test(b.name) || String(b.getProperties?.().waterlogged) === "true");
     const dry = (b) => Boolean(b) && !watery(b) && (b.boundingBox === "empty") && !/lava|fire/.test(b.name);
-    const eye = () => bot.entity.position.offset(0, bot.entity.height ?? 1.62, 0);
+    const eye = () => bot.entity.position.offset(0, bot.entity.eyeHeight ?? 1.62, 0);
     const headUnder = () => Boolean(bot.entity) && watery(bot.blockAt(eye().floored()));
     const air = () => bot.oxygenLevel ?? 20; // 0-20, from the server
     // In the water, or bobbing on top of it (the bot pops out of it at each bob).
@@ -29,25 +39,36 @@ function installSwimming(ctx) {
 
     let underSince = null;
     let inWaterSince = null;
-    // How far down the head is.
-    function depth() {
+    // Time to come up is the depth at ~2.5 blocks a second; keep 4 s spare.
+    // Air is the server's (20 = 15 s); without it, guess from time under.
+    const UP = 2.5, DOWN = 3.5, SWIM = 2, SPARE = 4, BREATH = 15; // blocks/s, blocks/s, blocks/s, s, s
+    const airLeft = () => (bot.oxygenLevel !== undefined ? (air() * BREATH) / 20 : BREATH - (underSince !== null ? (Date.now() - underSince) / 1000 : 0));
+    // How long to get to air from here: straight up, or with something over
+    // the water (ice, rock), breaking it if it's quick, else swimming across
+    // to the nearest air (worked out once a second: it's a search).
+    let across = { at: 0, secs: 0 };
+    function secondsToAir() {
         const e = eye().floored();
         let y = e.y;
         while (y < e.y + 30 && watery(bot.blockAt(new Vec3(e.x, y + 1, e.z)))) y++;
-        return y + 1 - eye().y;
+        const up = (y + 1 - eye().y) / UP;
+        const lid = bot.blockAt(new Vec3(e.x, y + 1, e.z));
+        if (!lid || dry(lid)) return up;
+        const dig = lidSeconds(lid);
+        if (dig !== null) return up + dig;
+        if (Date.now() - across.at > 1000) {
+            const way = wayToAir();
+            across = { at: Date.now(), secs: way ? way.length / SWIM + 1 : BREATH };
+        }
+        return Math.max(up, across.secs);
     }
-    // Time to come up is the depth at ~2.5 blocks a second; keep 3 s spare.
-    // Air is the server's (20 = 15 s); without it, guess from time under.
     ctx.shortOfAir = () => {
         if (!headUnder()) return false;
-        const needed = depth() / 2.5 + 3;
-        const left = bot.oxygenLevel !== undefined ? (air() * 15) / 20 : 15 - (underSince !== null ? (Date.now() - underSince) / 1000 : 0);
-        return left <= needed;
+        return airLeft() <= secondsToAir() + SPARE;
     };
 
     let floating = false;
-    let surfacing = false;
-    let raisedAlarm = false;
+    let surfacing = null; // the trip up, while it's under way
     let diving = false;
     bot.on("physicsTick", () => {
         if (!bot.entity) return;
@@ -56,16 +77,12 @@ function installSwimming(ctx) {
         inWaterSince = wet() ? inWaterSince ?? Date.now() : null;
         if (surfacing) return;
 
-        // Running out of air: drop everything (the job's next safety check swims up).
+        // Running out of air: drop everything and go up, now.
         if (ctx.shortOfAir()) {
-            if (!raisedAlarm) {
-                raisedAlarm = true;
-                if (bot.targetDigBlock) bot.stopDigging();
-                ctx.stopCurrentAction();
-                if (!ctx.busy) ctx.breathe().catch(() => {});
-            }
-        } else {
-            raisedAlarm = false;
+            if (bot.targetDigBlock) bot.stopDigging();
+            ctx.stopCurrentAction();
+            ctx.breathe().catch(() => {});
+            return;
         }
 
         // Idle in deep water: keep the head up.
@@ -90,28 +107,47 @@ function installSwimming(ctx) {
         }
     });
 
-    // The nearest air to breathe: open air with water (or ground) under it.
-    function breathingSpot() {
-        const me = bot.entity.position.floored();
-        let best = null;
-        for (let dy = 0; dy <= 12; dy++) {
-            for (let dx = -8; dx <= 8; dx++) {
-                for (let dz = -8; dz <= 8; dz++) {
-                    const p = me.offset(dx, dy, dz);
-                    if (!dry(bot.blockAt(p))) continue;
-                    const below = bot.blockAt(p.offset(0, -1, 0));
-                    if (!below || (!watery(below) && below.boundingBox !== "block")) continue;
-                    const d = p.distanceTo(me);
-                    if (!best || d < best.d) best = { p, d };
+    // The nearest air it can swim up into: a gap in the top of the water (a
+    // hole in the ice, the open sea, an air pocket in a flooded cave), found
+    // by swimming outwards through the water, so not one past a wall or on
+    // the far side of the ice. Returns the way there (water blocks, the last
+    // one under the air) or null.
+    function wayToAir() {
+        const start = eye().floored();
+        if (!watery(bot.blockAt(start))) return null;
+        const seen = new Map([[start.toString(), null]]);
+        let edge = [start];
+        for (let steps = 0; steps < 40 && edge.length; steps++) {
+            const next = [];
+            for (const p of edge) {
+                if (dry(bot.blockAt(p.offset(0, 1, 0)))) {
+                    const way = [];
+                    for (let q = p; q; q = seen.get(q.toString())) way.unshift(q);
+                    return way;
+                }
+                for (const [dx, dy, dz] of [[0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, -1, 0]]) {
+                    const q = p.offset(dx, dy, dz);
+                    const k = q.toString();
+                    if (seen.has(k) || seen.size > 4000 || Math.abs(q.x - start.x) > 12 || Math.abs(q.z - start.z) > 12 || q.y < start.y - 6) continue;
+                    seen.set(k, p);
+                    if (watery(bot.blockAt(q))) next.push(q);
                 }
             }
+            edge = next;
         }
-        return best?.p || null;
+        return null;
     }
 
-    async function breathe() {
-        if (surfacing || !ctx.shortOfAir()) return;
-        surfacing = true;
+    // Up for air: short of it, or (`full`) before a dive with less than a
+    // full breath. Anyone asking while it's on its way up waits for it.
+    function breathe({ full = false } = {}) {
+        if (surfacing) return surfacing;
+        if (!(ctx.shortOfAir() || (full && headUnder() && air() < 19))) return Promise.resolve();
+        surfacing = surface().finally(() => (surfacing = null));
+        return surfacing;
+    }
+
+    async function surface() {
         try {
             await ctx.during("Swimming up for air", async () => {
                 bot.pathfinder.setGoal(null);
@@ -120,7 +156,7 @@ function installSwimming(ctx) {
                 let bestY = bot.entity.position.y;
                 let stuckSince = Date.now();
                 let outSince = null;
-                while (Date.now() - start < 25000) {
+                while (Date.now() - start < 30000) {
                     // Breathe until full (bobbing at the top pops it out of the water now and then).
                     outSince = headUnder() ? null : outSince ?? Date.now();
                     const full = bot.oxygenLevel !== undefined ? air() >= 19 : outSince !== null && Date.now() - outSince > 2500;
@@ -131,12 +167,15 @@ function installSwimming(ctx) {
                         bestY = bot.entity.position.y;
                         stuckSince = Date.now();
                     }
-                    // Not getting any higher: something overhead. Swim to open air.
-                    if (headUnder() && Date.now() - stuckSince > 2000) {
-                        const spot = breathingSpot();
-                        if (spot) {
-                            ctx.log(`Something above me; swimming to air at ${ctx.fmt(spot)}.`);
-                            await ctx.withTimeout(bot.pathfinder.goto(new goals.GoalNear(spot.x, spot.y, spot.z, 1)), 10000).catch(() => {});
+                    // Not getting any higher: something overhead. Break through it,
+                    // or swim through the water to the nearest air.
+                    if (headUnder() && Date.now() - stuckSince > 1000) {
+                        if (!(await breakThrough())) {
+                            const way = wayToAir();
+                            if (way) {
+                                ctx.log(`Something above me; swimming to air at ${ctx.fmt(way[way.length - 1].offset(0, 1, 0))}.`);
+                                await swimAlong(way, 10000);
+                            }
                         }
                         stuckSince = Date.now();
                         bestY = bot.entity.position.y;
@@ -145,9 +184,77 @@ function installSwimming(ctx) {
                 }
             });
         } finally {
-            bot.setControlState("jump", false);
-            surfacing = false;
+            for (const c of ["jump", "forward", "sprint"]) bot.setControlState(c, false);
         }
+    }
+
+    // Seconds to break a block over the water from below, if it's quick
+    // (2.5 s at most) and safe: not lava above it, not something it mustn't
+    // break, not sand or gravel with more on top (that would only drop in).
+    // Otherwise null.
+    function lidSeconds(lid) {
+        if (lid.boundingBox !== "block" || !lid.diggable) return null;
+        if (ctx.kb?.neverBreakIds?.().includes(lid.type)) return null;
+        const over = bot.blockAt(lid.position.offset(0, 1, 0));
+        if (/lava/.test(over?.name || "")) return null;
+        if (bot.pathfinder.movements?.gravityBlocks?.has(lid.type) && over?.boundingBox === "block") return null;
+        const tool = bot.pathfinder.bestHarvestTool(lid);
+        const ms = lid.digTime(tool ? tool.type : null, false, true, true, [], bot.entity.effects);
+        return ms > 2500 ? null : ms / 1000 + 0.5;
+    }
+
+    // The block over its head, if lidSeconds says so: break it and go on up.
+    async function breakThrough() {
+        const above = bot.blockAt(eye().floored().offset(0, 1, 0));
+        if (!above || lidSeconds(above) === null) return false;
+        const tool = bot.pathfinder.bestHarvestTool(above);
+        try {
+            ctx.log(`Breaking the ${ctx.pretty(above.name)} over my head to get up for air.`);
+            if (tool) await bot.equip(tool, "hand");
+            await bot.dig(above, true);
+            return true;
+        } catch (err) {
+            return false;
+        }
+    }
+
+    // Swim along a way through the water (from wayToAir) until the head is
+    // out: at each moment, at the furthest of the next few blocks of it that
+    // it can swim straight to.
+    async function swimAlong(way, ms) {
+        const start = Date.now();
+        const centre = (p) => p.offset(0.5, 0.5, 0.5);
+        try {
+            while (Date.now() - start < ms && headUnder()) {
+                const e = eye();
+                // where it's got to along the way
+                let at = 0;
+                way.forEach((p, i) => {
+                    if (centre(p).distanceTo(e) < centre(way[at]).distanceTo(e)) at = i;
+                });
+                let aim = way[at];
+                for (let i = at + 1; i < Math.min(way.length, at + 6); i++) if (straight(e, centre(way[i]))) aim = way[i];
+                if (aim === way[way.length - 1]) aim = aim.offset(0, 1, 0); // the last one: up into the air
+                const t = centre(aim);
+                const dx = t.x - e.x, dy = t.y - e.y, dz = t.z - e.z;
+                await bot.look(Math.atan2(-dx, -dz), Math.atan2(dy, Math.hypot(dx, dz)), true);
+                bot.setControlState("forward", Math.hypot(dx, dz) > 0.3);
+                bot.setControlState("jump", dy > -0.3);
+                await bot.waitForTicks(2);
+            }
+        } finally {
+            bot.setControlState("forward", false);
+        }
+    }
+
+    // Nothing but water between two points?
+    function straight(a, b) {
+        const n = Math.ceil(a.distanceTo(b) / 0.3);
+        for (let i = 1; i < n; i++) {
+            const p = a.plus(b.minus(a).scaled(i / n));
+            if (!watery(bot.blockAt(p.floored())) && !dry(bot.blockAt(p.floored()))) return false;
+        }
+        return true;
     }
 
     // The top of the water the bot is in (the highest water block above its feet).
@@ -185,7 +292,7 @@ function installSwimming(ctx) {
     // place it can climb out (where the bank isn't above the water). If the
     // banks are all a block too high, dig the edge of the nearest one down.
     async function getOutOfWater() {
-        if (ctx.busy || !wet() || inWaterSince === null || Date.now() - inWaterSince < 4000) return;
+        if (surfacing || ctx.busy || !wet() || inWaterSince === null || Date.now() - inWaterSince < 4000) return;
         const me = bot.entity.position.floored();
         const top = surfaceY();
         let low = null, high = null;
@@ -227,10 +334,37 @@ function installSwimming(ctx) {
     // swim to the water above it and dive, down to stand on the bottom next to
     // it (digging while floating takes five times as long).
     const isUnderwater = (pos) => watery(bot.blockAt(pos.offset(0, 1, 0)));
+
+    // How much water is over `pos`, and whether a dive for it (down, digging
+    // it, back up, with time to spare) fits in one breath.
+    function waterOver(pos) {
+        let d = 0;
+        while (d < 64 && watery(bot.blockAt(pos.offset(0, d + 1, 0)))) d++;
+        return d;
+    }
+    function digSeconds(pos) {
+        const block = bot.blockAt(pos);
+        if (!block || block.boundingBox !== "block") return 0;
+        const tool = bot.pathfinder.bestHarvestTool(block);
+        return block.digTime(tool ? tool.type : null, false, true, false, [], bot.entity.effects) / 1000 + 0.5;
+    }
+    function diveSeconds(pos) {
+        const d = waterOver(pos);
+        return d / DOWN + digSeconds(pos) + d / UP + SPARE;
+    }
+    ctx.tooDeepToDive = (pos) => isUnderwater(pos) && diveSeconds(pos) > BREATH;
+    ctx.waterOver = waterOver;
+
     async function diveTo(pos) {
         const target = pos.offset(0.5, 0.5, 0.5);
         const close = () => eye().distanceTo(target) <= 4.2;
-        if (close() && (bot.entity.onGround || !wet())) return;
+        if (diveSeconds(pos) > BREATH) throw new Error(`too deep to dive for (${waterOver(pos)} blocks of water)`);
+        // Not enough air left for this one (already down there: to dig it and
+        // get back up): up for a full breath first, rather than start and be
+        // called away half way through.
+        const there = close() && (bot.entity.onGround || !wet());
+        if (headUnder() && airLeft() < (there ? digSeconds(pos) + secondsToAir() + SPARE : diveSeconds(pos))) await breathe({ full: true });
+        else if (there) return;
         if (!wet() || Math.hypot(bot.entity.position.x - target.x, bot.entity.position.z - target.z) > 3) {
             ctx.doing(`Swimming over the ${bot.blockAt(pos)?.name.replace(/_/g, " ") || "spot"} at ${ctx.fmt(pos)}`);
             await ctx.withTimeout(bot.pathfinder.goto(new goals.GoalNearXZ(pos.x, pos.z, 2)), 40000);
@@ -252,7 +386,8 @@ function installSwimming(ctx) {
                 const dx = target.x - p.x, dz = target.z - p.z;
                 await bot.look(Math.atan2(-dx, -dz), -0.6, true);
                 bot.setControlState("jump", false);
-                bot.setControlState("forward", Math.hypot(dx, dz) > 1.2);
+                // (on the bank right by it: step off into the water)
+                bot.setControlState("forward", Math.hypot(dx, dz) > 1.2 || !wet());
                 await bot.waitForTicks(2);
             }
         } finally {
@@ -260,6 +395,13 @@ function installSwimming(ctx) {
             bot.setControlState("forward", false);
         }
     }
+
+    // Nowhere to walk to while it's on its way up for air.
+    const goto = bot.pathfinder.goto.bind(bot.pathfinder);
+    bot.pathfinder.goto = async (...args) => {
+        if (surfacing) await surfacing.catch(() => {});
+        return goto(...args);
+    };
 
     Object.assign(ctx, { breathe, getOutOfWater, headUnderwater: headUnder, isUnderwater, diveTo });
 }

@@ -285,12 +285,19 @@ The dashboard map shows them as small squares (hover for which and where).
 
 ## Water
 
-- It watches its air. When there's only just enough left to swim up (deeper
-  water, sooner), it drops what it's doing, even mid-dig, and swims up; with
-  something overhead it swims to the nearest open air. Then it carries on.
+- It watches its air every tick. When there's only just enough left to get
+  to air (deeper water, sooner), it drops whatever it's doing, even mid-dig,
+  and swims up, and nothing else moves it until it has a full breath. Under
+  ice or a cave roof it times that by the way out: it breaks through if the
+  block is quick to break, otherwise it swims through the water to the
+  nearest gap (a hole in the ice, an air pocket). Then it carries on.
 - Blocks under water: it swims to the water above them, dives (pushing down
   like a player holding sneak), stands on the bottom and digs (slower under
-  water, as in the game), coming up for air when it needs to.
+  water, as in the game). It only dives for a block when down, digging it
+  and back up fits in one breath with a few seconds spare, and it goes down
+  with a full breath (it comes up first rather than start a dig it would
+  have to leave). Deeper blocks are left alone (it says so if that's all
+  there is), and it would rather have them from dry land or shallow water.
 - Left idle in deep water it keeps its head up, then swims to where it can
   climb out (a bank no higher than the water). If every bank is a block too
   high, it digs the edge of the nearest one down and climbs out there.
