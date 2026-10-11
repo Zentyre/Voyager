@@ -153,8 +153,13 @@ function installCombat(ctx) {
         );
     }
 
-    function raiseShield(up) {
-        if (up && !shieldUp && hasShield()) {
+    // Up while a fight wants it (closing in on archers, a player about to
+    // hit) or an arrow's on its way (see below).
+    let fightWantsShield = false;
+    let arrowComing = false;
+    function applyShield() {
+        const up = (fightWantsShield || arrowComing) && hasShield();
+        if (up && !shieldUp) {
             bot.activateItem(true);
             shieldUp = true;
         } else if (!up && shieldUp) {
@@ -162,6 +167,103 @@ function installCombat(ctx) {
             shieldUp = false;
         }
     }
+    function raiseShield(up) {
+        fightWantsShield = up;
+        applyShield();
+    }
+    // Down for its own swing (it can't hit with the shield up); back up next tick if still wanted.
+    function lowerForSwing() {
+        if (!shieldUp) return;
+        bot.deactivateItem();
+        shieldUp = false;
+    }
+
+    // ---------- arrows ----------
+
+    // An arrow (or trident) on its way to it: the shield goes up, facing
+    // where it's coming from, until it's gone by. Each one's path is worked
+    // out from where it was last tick; it's blocked if it will pass within
+    // a block and a half in the next 9 ticks (a shield takes 5 to come up:
+    // no sooner, so it isn't stood still with its shield up for longer than
+    // it has to be on its way somewhere).
+    const PROJECTILES = /^(arrow|spectral_arrow|trident)$/;
+    const BOWS = /^(bow|crossbow)$/;
+    // A player (not the owner, an admin or crew) or an archer mob within 24
+    // blocks that can see it, drawing a bow at it (the game shows others
+    // using an item: the low bit of living entities' flags), facing it.
+    function drawingAtMe() {
+        const me = bot.entity.position;
+        for (const e of Object.values(bot.entities)) {
+            if (e === bot.entity || !e.position || !(e.type === "player" || RANGED.has(e.name))) continue;
+            if (e.type === "player" && trustedName(e.username)) continue;
+            if (!BOWS.test(e.heldItem?.name || "") || !((e.metadata?.[8] ?? 0) & 1)) continue;
+            const to = me.minus(e.position);
+            const d = Math.hypot(to.x, to.z);
+            if (d < 2 || d > 24) continue;
+            if ((-Math.sin(e.yaw) * to.x - Math.cos(e.yaw) * to.z) / d < 0.8) continue; // facing elsewhere
+            if (canSee(e)) return e;
+        }
+        return null;
+    }
+    const trustedName = (name) => {
+        const n = String(name || "").toLowerCase();
+        return [config.owner, ...(config.admins || [])].some((t) => t && t.toLowerCase() === n) || Boolean(ctx.crew?.members().has(n));
+    };
+    const flying = new Map(); // id -> position last tick
+    let blockUntil = 0;
+    let blockFrom = null;
+    bot.on("physicsTick", () => {
+        if (!bot.entity) return;
+        if (!hasShield()) {
+            flying.clear();
+            if (arrowComing) {
+                arrowComing = false;
+                applyShield();
+            }
+            return;
+        }
+        // (drawing its bow or eating: that goes on; it's not dropped for a shield)
+        if (bot.usingHeldItem && !shieldUp) return;
+        const me = bot.entity.position.offset(0, 1, 0);
+        let soonest = null;
+        for (const e of Object.values(bot.entities)) {
+            if (!e.position || !PROJECTILES.test(e.name || "")) continue;
+            const last = flying.get(e.id);
+            const now = e.position.clone();
+            flying.set(e.id, now);
+            if (!last) continue;
+            const v = now.minus(last);
+            const speed2 = v.dot(v);
+            if (speed2 < 0.04) continue; // stuck in something, or falling at the end
+            const rel = me.minus(now);
+            const t = rel.dot(v) / speed2; // ticks till it's nearest
+            if (t <= 0 || t > 9) continue;
+            if (rel.minus(v.scaled(t)).norm() > 1.5) continue; // goes wide
+            if (!soonest || t < soonest.t) soonest = { t, from: now };
+        }
+        if (flying.size > 64) for (const id of flying.keys()) if (!bot.entities[id]) flying.delete(id);
+        if (soonest) {
+            blockUntil = Date.now() + soonest.t * 50 + 150;
+            blockFrom = soonest.from;
+        }
+        // And one being drawn at it: a full bow's arrow comes 3 blocks a
+        // tick, there in 4 ticks from 12 blocks off, too soon to get a
+        // shield up once it's seen in the air. So up while they draw.
+        const archer = drawingAtMe();
+        if (archer && !soonest) {
+            blockUntil = Math.max(blockUntil, Date.now() + 150);
+            blockFrom = archer.position.offset(0, 1.5, 0);
+        }
+        const coming = Date.now() < blockUntil;
+        if (coming) {
+            bot.lookAt(blockFrom, true).catch(() => {});
+            // Walking somewhere: it stops for that moment (it's facing the
+            // arrow, so it would walk off that way), and carries on after.
+            if (bot.pathfinder.isMoving()) for (const c of ["forward", "back", "left", "right", "sprint", "jump"]) bot.setControlState(c, false);
+        }
+        arrowComing = coming;
+        applyShield(); // (also back up after its own swing, if still wanted)
+    });
 
     function rangedNearby(radius = 16) {
         const me = bot.entity.position;
@@ -257,6 +359,7 @@ function installCombat(ctx) {
                     } else {
                         if (!mob.isValid) break;
                         await bot.lookAt(aimPoint(mob), true);
+                        lowerForSwing();
                         bot.attack(mob);
                     }
                     lastSwing = Date.now();
@@ -357,8 +460,16 @@ function installCombat(ctx) {
                     const ready = lastSwing + cooldownMs;
                     const water = bot.entity.isInWater;
                     const willBe = water ? r : r - Math.max(0, closing) * CRIT_TICKS;
+                    // Them about to be in their reach (3): shield up (it
+                    // takes a quarter of a second to come up, so a little
+                    // ahead), crit jumps included; it only comes down for
+                    // the moment of its own swing. Not against an axe, which
+                    // knocks a shield out for 5 s: it keeps backing off from
+                    // that instead.
+                    const axe = /_axe$/.test(foe.heldItem?.name || "");
+                    raiseShield(!axe && r < REACH + 0.6 + Math.max(0, closing) * 5);
                     if (Date.now() >= ready - (water ? 0 : CRIT_TICKS * 50) && willBe <= reach - 0.3) {
-                        const hit = water ? (inReach(foe) ? (bot.attack(foe), true) : false) : await critSwing(foe, { moving: true, notBefore: ready });
+                        const hit = water ? (inReach(foe) ? (lowerForSwing(), bot.attack(foe), true) : false) : await critSwing(foe, { moving: true, notBefore: ready });
                         if (hit) lastSwing = Date.now();
                         continue;
                     }
@@ -367,6 +478,7 @@ function installCombat(ctx) {
             }
             learn.count("kills");
         } finally {
+            raiseShield(false);
             bot.pathfinder.setGoal(null);
             bot.clearControlStates();
             ctx.target = null;
@@ -424,6 +536,7 @@ function installCombat(ctx) {
         while (Date.now() < notBefore && !bot.entity.onGround) await bot.waitForTicks(1);
         if (!mob.isValid || !inReach(mob, 0.3)) return false;
         await bot.lookAt(aimPoint(mob), true);
+        lowerForSwing();
         bot.attack(mob);
         return true;
     }
@@ -461,6 +574,7 @@ function installCombat(ctx) {
                 if (inReach(mob) && canSee(mob) && Date.now() - lastHit > 500) {
                     lastHit = Date.now();
                     await bot.lookAt(aimPoint(mob), true);
+                    lowerForSwing();
                     bot.attack(mob);
                 }
                 // Digging or building its way out (of a pit, say): let it finish.
