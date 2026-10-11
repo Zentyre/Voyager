@@ -23,6 +23,7 @@ const ARMOR_RANK = ["leather", "golden", "chainmail", "turtle", "iron", "diamond
 //   fast - hit as soon as the weapon is ready
 //   kite - hit, then step back out of reach
 //   bow  - shoot from a distance (only when carrying a bow and arrows)
+// A player gets none of these: see duel().
 const STYLES = ["crit", "fast", "kite"];
 const RANGED = new Set(["skeleton", "stray", "bogged", "pillager", "witch", "blaze"]);
 // Melee reach, measured as the game does: from the eyes to the nearest point
@@ -30,6 +31,8 @@ const RANGED = new Set(["skeleton", "stray", "bogged", "pillager", "witch", "bla
 // blocks of tolerance), so config.attackReach (default 5) lets the bot hit
 // from further than a mob can hit back.
 const REACH = 3.0;
+// Ticks from jumping to falling (when a hit is a crit).
+const CRIT_TICKS = 7;
 
 function armorInfo(name) {
     const match = /^([a-z]+)_(helmet|chestplate|leggings|boots)$/.exec(name || "");
@@ -180,6 +183,7 @@ function installCombat(ctx) {
     // can't be got to without digging, and hasn't hurt us lately.
     async function attack(mob, { timeoutMs = 30000, maxDistance = Infinity, style = "fast", leash = null, defend = false } = {}) {
         if (style === "bow") return ctx.shoot(mob, { timeoutMs, maxDistance, leash });
+        if (mob.type === "player") return duel(mob, { timeoutMs: Math.max(timeoutMs, 60000), maxDistance, leash, defend });
         const before = ctx.interrupts;
         let seen = Date.now();
         let closest = Infinity;
@@ -275,6 +279,98 @@ function installCombat(ctx) {
         }
     }
 
+    // A player: they reach 3 blocks, and it reaches further (attackReach, 5
+    // by default; the server allows 6). So it keeps off at about 4.6 (eyes to
+    // their hitbox): too far for them to hit, close enough for it. Coming in
+    // closer, they're backed away from (facing them, while there's safe
+    // ground behind); drifting out, it steps in, without sprinting (that
+    // spoils a crit). Each time its weapon is ready, it jumps and hits on
+    // the way down: a critical hit, half as much again. It used to stand
+    // where it was once in reach, swinging, and trade hits.
+    async function duel(foe, { timeoutMs, maxDistance, leash, defend }) {
+        const before = ctx.interrupts;
+        const start = Date.now();
+        let seen = Date.now();
+        ctx.target = foe;
+        const weapon = await equipWeapon();
+        const cooldownMs = 1000 / weapon.speed;
+        const reach = attackReach();
+        // (with a short attackReach it can't outreach them: then just in its own reach)
+        const spacing = reach >= REACH + 1 ? Math.max(REACH + 1, reach - 0.4) : reach - 0.4;
+        const chase = new goals.GoalFollow(foe, Math.max(2, spacing - 0.5));
+        let chasing = false;
+        let lastSwing = 0;
+        let lastR = null;
+        let closing = 0;
+        const move = (dir) => {
+            bot.setControlState("sprint", false);
+            bot.setControlState("forward", dir === "in");
+            bot.setControlState("back", dir === "out");
+        };
+        try {
+            while (foe.isValid && bot.entities[foe.id]) {
+                ctx.checkStop();
+                if (ctx.interrupts !== before) throw new Error("interrupted");
+                if (Date.now() - start > timeoutMs) throw new Error(`couldn't beat ${foe.username || "the player"} in time`);
+                const distance = foe.position.distanceTo(bot.entity.position);
+                if (distance > maxDistance || offLeash(leash)) return; // they left, or we strayed
+                if (canSee(foe)) seen = Date.now();
+                if (defend && !hurtMe(foe, 5000) && Date.now() - seen > 3000) throw new Error(`${foe.username || "the player"} went out of sight; leaving them`);
+                if (bot.health <= config.fleeHealth) {
+                    move(null);
+                    await ctx.during("Too hurt: backing off to eat", () => retreat(foe));
+                    throw new Error(`too hurt to keep fighting ${foe.username || "the player"}`);
+                }
+                const r = reachTo(foe);
+                // How fast they're closing in (blocks a tick, smoothed).
+                if (lastR !== null) closing = 0.3 * closing + 0.7 * (lastR - r);
+                lastR = r;
+                if (r > reach + 3 || !canSee(foe)) {
+                    // Well out of reach (or round a corner): go after them.
+                    if (!chasing) {
+                        move(null);
+                        bot.pathfinder.setGoal(chase, true);
+                        chasing = true;
+                    }
+                } else {
+                    if (chasing) {
+                        bot.pathfinder.setGoal(null);
+                        chasing = false;
+                    }
+                    await bot.lookAt(aimPoint(foe), true);
+                    // Keeping its distance, the crit jumps included (they
+                    // take half a second, in which they'd walk right up);
+                    // not walking at them when they're coming anyway. With
+                    // its weapon nearly ready and them coming in, it backs
+                    // off, so its jump carries it away from them, not on.
+                    const soon = Date.now() >= lastSwing + cooldownMs - 500;
+                    if (r < spacing - 0.3 && room(foe)) move("out");
+                    else if (soon && closing > 0.02 && room(foe)) move("out");
+                    else if (r > spacing + 0.4 && closing < 0.05 && !soon) move("in");
+                    else move(null);
+                    // A crit lands about 7 ticks after the jump, and they
+                    // keep coming meanwhile: jump that much early, so it
+                    // lands as they come into reach (not once they're at
+                    // arm's length), and as the weapon's recharged.
+                    const ready = lastSwing + cooldownMs;
+                    const water = bot.entity.isInWater;
+                    const willBe = water ? r : r - Math.max(0, closing) * CRIT_TICKS;
+                    if (Date.now() >= ready - (water ? 0 : CRIT_TICKS * 50) && willBe <= reach - 0.3) {
+                        const hit = water ? (inReach(foe) ? (bot.attack(foe), true) : false) : await critSwing(foe, { moving: true, notBefore: ready });
+                        if (hit) lastSwing = Date.now();
+                        continue;
+                    }
+                }
+                await bot.waitForTicks(1);
+            }
+            learn.count("kills");
+        } finally {
+            bot.pathfinder.setGoal(null);
+            bot.clearControlStates();
+            ctx.target = null;
+        }
+    }
+
     // Safe ground for two steps straight back from the mob.
     function room(mob) {
         const me = bot.entity.position;
@@ -300,9 +396,16 @@ function installCombat(ctx) {
     // A critical hit (+50% damage) needs the hit to land while falling after a
     // jump, and not while sprinting. So: stop chasing and sprinting, jump, and
     // swing on the way down if it's still in reach (otherwise a normal hit).
-    async function critSwing(mob) {
+    // (`moving`: carry on stepping back or in meanwhile, only not sprinting;
+    // `notBefore`: not until then, the weapon's recharged, if still falling.)
+    // True if it swung.
+    async function critSwing(mob, { moving = false, notBefore = 0 } = {}) {
         bot.pathfinder.setGoal(null);
-        bot.clearControlStates(); // also stops sprinting, which cancels crits
+        if (moving) {
+            bot.setControlState("sprint", false);
+            bot.setControlState("forward", false); // (never on into them)
+        }
+        else bot.clearControlStates(); // also stops sprinting, which cancels crits
         await bot.lookAt(aimPoint(mob), true);
         await bot.waitForTicks(1); // let the server see we stopped sprinting
         bot.setControlState("jump", true);
@@ -316,9 +419,11 @@ function installCombat(ctx) {
         }
         // The server decides from our position updates, so let it see us drop first.
         if (!bot.entity.onGround) await bot.waitForTicks(1);
-        if (!mob.isValid || !inReach(mob, 0.3)) return;
+        while (Date.now() < notBefore && !bot.entity.onGround) await bot.waitForTicks(1);
+        if (!mob.isValid || !inReach(mob, 0.3)) return false;
         await bot.lookAt(aimPoint(mob), true);
         bot.attack(mob);
+        return true;
     }
 
     // ---------- running away ----------
@@ -461,6 +566,7 @@ function installCombat(ctx) {
         }
         if (bot.health <= config.fleeHealth) return { style: "flee", context };
         if (bow && distance > 10) return { style: "bow", context }; // not worth walking over
+        if (mob.type === "player") return { style: "duel", context }; // (not learned: see duel())
         return { style: learn.choose(context, bow ? [...STYLES, "bow"] : STYLES), context };
     }
 
@@ -469,7 +575,8 @@ function installCombat(ctx) {
         const deathsBefore = ctx.deaths;
         const { style, context } = chooseStyle(mob);
         let won = false;
-        const step = style === "flee" ? `Running from a ${ctx.pretty(mob.name)}` : `Fighting a ${ctx.pretty(mob.name)}${style === "bow" ? " with my bow" : ""}`;
+        const who = mob.type === "player" ? mob.username : `a ${ctx.pretty(mob.name)}`;
+        const step = style === "flee" ? `Running from ${who}` : `Fighting ${who}${style === "bow" ? " with my bow" : ""}`;
         try {
             await ctx.during(step, () => fightAs(style, mob, maxDistance, leash));
             won = style !== "flee" && !mob.isValid;
@@ -477,7 +584,7 @@ function installCombat(ctx) {
             if (err instanceof ctx.Stopped) throw err;
             ctx.log(err.message);
         } finally {
-            if (style !== "flee") {
+            if (style !== "flee" && style !== "duel") {
                 const died = ctx.deaths > deathsBefore;
                 const damage = Math.max(0, startHealth - bot.health);
                 const score = died ? 0 : won ? Math.max(0.1, 1 - damage / 20) : 0.2;
@@ -495,7 +602,7 @@ function installCombat(ctx) {
             await flee(mob);
             return;
         }
-        ctx.log(`Fighting ${mob.name} (${style}).`);
+        ctx.log(`Fighting ${mob.type === "player" ? mob.username : mob.name} (${style}).`);
         const movements = bot.pathfinder.movements;
         const canDig = movements.canDig;
         movements.canDig = false;
