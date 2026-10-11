@@ -21,10 +21,21 @@ function installSurvival(ctx) {
         return ["survival", "adventure"].includes(bot.game?.gameMode);
     }
 
+    // A player who hit it lately: fought back (fightBackPlayers), unless it's
+    // the owner, an admin or a crewmate (a stray hit isn't a fight).
+    const trusted = (name) => {
+        const n = String(name || "").toLowerCase();
+        return [config.owner, ...(config.admins || [])].some((t) => t && t.toLowerCase() === n) || Boolean(ctx.crew?.members().has(n));
+    };
+    const angry = (entity) =>
+        entity.type === "player" && config.fightBackPlayers !== false && ctx.hurtMe(entity, 10000) && !trusted(entity.username);
+
     function isThreat(entity) {
         if (!entity?.position || entity === bot.entity || entity === ctx.target) return false;
-        if (!ctx.isHostile(entity) || kb.DONT_PROVOKE.has(entity.name)) return false;
-        if ((ignoreUntil.get(entity.id) || 0) > Date.now()) return false;
+        const player = angry(entity);
+        if (!player && (!ctx.isHostile(entity) || kb.DONT_PROVOKE.has(entity.name))) return false;
+        // (left alone after a fight that didn't finish them: not if they hit it again since)
+        if ((ignoreUntil.get(entity.id) || 0) > Date.now() && !(player && ctx.hurtMe(entity, 2000))) return false;
         const me = bot.entity.position;
         // Creepers get noticed sooner (running needs a head start), and from
         // further above or below: one at the edge of the pit the bot is

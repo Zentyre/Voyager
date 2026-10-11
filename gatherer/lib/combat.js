@@ -316,6 +316,8 @@ function installCombat(ctx) {
                 if (distance > maxDistance || offLeash(leash)) return; // they left, or we strayed
                 if (canSee(foe)) seen = Date.now();
                 if (defend && !hurtMe(foe, 5000) && Date.now() - seen > 3000) throw new Error(`${foe.username || "the player"} went out of sight; leaving them`);
+                // Fighting back (not guarding anyone): once they've stopped hitting it and gone off, it lets them go.
+                if (!ctx.ward && !hurtMe(foe, 15000) && reachTo(foe) > attackReach() + 3) return;
                 if (bot.health <= config.fleeHealth) {
                     move(null);
                     await ctx.during("Too hurt: backing off to eat", () => retreat(foe));

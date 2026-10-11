@@ -37,6 +37,7 @@ const DEFAULTS = {
     guardRadius: 12,
     followDistance: 3,
     guardAgainstPlayers: false,
+    fightBackPlayers: true, // fight a player who hits it (not the owner, admins or crew)
     farm: true,
     farmSize: 9,
     farmWaitMinutes: 30,
