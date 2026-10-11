@@ -612,7 +612,7 @@ function createBot(config, crew, reporter) {
     const HELP = "Commands: " + [
         "get <item> [count]", "plan <item>", "farm", "plant <crop> [plots]", "breed <animal> [pairs]",
         "brew <potion> [count] [long|strong|splash]", "sleep", "water", "bucket", "armor [material]",
-        "guard [player]", "spin [player] [radius]", "setchest [x y z|clear]", "bow [arrows]", "give [item|all] [count]",
+        "guard [player]", "spin [player] [radius]", "setchest [x y z|clear]", "bow [arrows]", "give [player] [item|all] [count]",
         "learned", "forget", "stop", "status", "queue", "inv", "eat", "come", "deposit", "home", "say <text>", "quit",
         "profile [name]", "build <schematic> [x y z] [rotate 90|180|270] [clear]", "build list|materials|resume",
     ]
@@ -806,17 +806,27 @@ function createBot(config, crew, reporter) {
             }
             case "give":
             case "drop": {
-                const player = requester && bot.players[requester]?.entity;
-                if (!player) return broadcast ? undefined : say(cantSee());
-                const what = args[0] || "all";
-                const count = args[1] ? parseInt(args[1], 10) : Infinity;
+                // give [player] [item|all] [count]: to whoever's named first (anything
+                // that isn't an item, "all" or a number), else whoever asked.
+                const rest = [...args];
+                let to = requester;
+                if (rest[0] && !/^\d+$/.test(rest[0]) && rest[0].toLowerCase() !== "all" && !bot.registry.itemsByName[rest[0]]) {
+                    const typed = rest.shift().replace(/[^A-Za-z0-9_]/g, "");
+                    if (typed.toLowerCase() !== "me") to = Object.keys(bot.players).find((n) => n.toLowerCase() === typed.toLowerCase()) || typed;
+                }
+                if (to && to === bot.username) return say("I can't give things to myself.");
+                const player = to && bot.players[to]?.entity;
+                if (!player) return broadcast ? undefined : say(to === requester ? cantSee() : `I can't see ${to}.`);
+                const what = rest[0] || "all";
+                const count = rest[1] ? parseInt(rest[1], 10) : Infinity;
+                if (!(count > 0)) return say(`Usage: ${config.commandPrefix}give [player] [item|all] [count]`);
                 const has = everything().some((i) => what === "all" || i.name === what);
                 if (!has) return broadcast ? undefined : say(`I don't have ${what === "all" ? "anything to give" : `any ${what}`}.`);
                 await runExclusive("give", async () => {
                     const given = await give(player, what, count);
                     const list = Object.entries(given).map(([n, c]) => `${c} ${n}`).join(", ");
-                    say(list ? `Here you go: ${list}.` : "Nothing to give.");
-                }, `Giving ${what === "all" ? "everything" : ctx.pretty(what)} to ${requester}`);
+                    say(!list ? "Nothing to give." : to === requester ? `Here you go: ${list}.` : `Gave ${to} ${list}.`);
+                }, `Giving ${what === "all" ? "everything" : ctx.pretty(what)} to ${to}`);
                 break;
             }
             case "stop":

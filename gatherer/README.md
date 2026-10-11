@@ -85,8 +85,8 @@ computer. You get a card per bot with:
   inventory, eat, sleep, home, deposit, armor and stop;
 - **All commands** (opens under the card): a button for every command, with
   dropdowns and boxes for the ones that take options (plan, plant, breed,
-  brew, armor set, guard, bow, give, say). "Come to me", "Give me" and
-  "Guard" with no name act on the owner.
+  brew, armor set, guard, bow, give, say). "Come to me", and "Give" and
+  "Guard" with no name, act on the owner.
 
 The **World** panel shows the in-game day, time and weather, everyone online
 (with their heads, ping, and how far they are from the nearest bot that can
@@ -430,7 +430,7 @@ not jobs you stopped. (`"doneWhisper": false` turns that off.)
 | `!water`                         | Place a water source next to it               |
 | `!bucket`                        | Get a filled water bucket                     |
 | `!guard [player]`                | Bodyguard a player (you, if no name). `!stop` dismisses it. Also `!bodyguard`, `!protect` |
-| `!give [item\|all] [count]`      | Walk to you and drop items. `all` is everything it has: bag, hotbar, the armor it's wearing and its off-hand. A named item comes from the bag first, then off its body (`!give iron_chestplate` takes off the one it wears if it has no spare). `!drop` does the same |
+| `!give [player] [item\|all] [count]` | Walk to a player (you, if no name) and drop items: `!give diamond 5`, `!give Steve diamond 5`, `!give Steve` (everything). `all` is everything it has: bag, hotbar, the armor it's wearing and its off-hand. A named item comes from the bag first, then off its body (`!give iron_chestplate` takes off the one it wears if it has no spare). `!drop` does the same |
 | `!bow [arrows]`                  | Get a bow and arrows (16 by default) to use in fights |
 | `!armor`                         | Put on the best armor it has and say what it's wearing |
 | `!armor <material>`              | Get and wear a full set: `leather`, `golden`, `iron` or `diamond` |

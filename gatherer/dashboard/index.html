@@ -365,7 +365,7 @@ const OPTIONS = [
   ["Spin", "spin {player} {radius}", `<input name="player" placeholder="player (empty = you)" aria-label="Player">` + `<input name="radius" type="number" min="2" max="16" value="3" aria-label="Radius">`],
   ["Set chest", "setchest {x} {y} {z}", `<input name="x" type="number" placeholder="x" aria-label="x (empty: the chest you're looking at)">` + `<input name="y" type="number" placeholder="y" aria-label="y">` + `<input name="z" type="number" placeholder="z" aria-label="z">`],
   ["Bow", "bow {arrows}", `<input name="arrows" type="number" min="1" value="16" aria-label="Arrows">`],
-  ["Give me", "give {item} {count}", `<input name="item" list="items" placeholder="item, or all" aria-label="Item">` + `<input name="count" type="number" min="1" placeholder="all" aria-label="How many">`],
+  ["Give", "give {player} {item} {count}", `<input name="player" placeholder="player (empty = you)" aria-label="Player">` + `<input name="item" list="items" placeholder="item, or all" aria-label="Item">` + `<input name="count" type="number" min="1" placeholder="all" aria-label="How many">`],
   ["Say", "say {text}", `<input name="text" placeholder="message for chat" aria-label="Message">`],
 ];
 const CAREFUL = [["stop", "Stop", false], ["forget", "Forget everything learned", true], ["quit", "Disconnect", true]];
