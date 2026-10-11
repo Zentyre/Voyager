@@ -441,10 +441,10 @@ not jobs you stopped. (`"doneWhisper": false` turns that off.)
 | `!status` / `!queue`             | Show progress, health and food / queued tasks |
 | `!inv`                           | List inventory                                |
 | `!eat`                           | Eat now if hungry                             |
-| `!come`                          | Walk to you (chat only)                       |
+| `!come`                          | Walk to you (from the dashboard: to the owner). A mob on the way is dealt with and it carries on, to where you are by then |
 | `!deposit [item\|all] [count]`   | Put things in its chest: with nothing after it, everything but its tools, weapons, armor, arrows, buckets and food; `all`, its whole bag; or that item (`!deposit oak_log 62`). It says what went in, counted from its bag. When its bag fills up during a task, it unloads what the task is collecting |
 | `!setchest [x y z\|clear]`        | Set the chest (or barrel) it unloads into: the one you're looking at (or the nearest to you, within 5 blocks), or the one at x y z. Remembered across restarts (in `memory/<bot>.chest.json`) and used instead of `"chest"` in config.json; `!setchest clear` goes back to that. Said to the crew, every bot uses it |
-| `!home`                          | Return to where it spawned                    |
+| `!home`                          | Return to where it spawned (carrying on after any fight on the way) |
 | `!say <text>`                    | Say something in chat                         |
 | `!help`                          | List commands                                 |
 | `!quit`                          | Disconnect                                    |

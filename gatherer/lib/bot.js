@@ -309,7 +309,7 @@ function createBot(config, crew, reporter) {
                 }
             }
             if (config.chest) await ctx.safely(ctx.depositAll);
-            if (config.returnHome && ctx.home) await ctx.safely(() => ctx.goTo(ctx.home, 2, "home"));
+            if (config.returnHome && ctx.home) await ctx.safely(() => ctx.travel(ctx.home, 2, "home"));
             ctx.tell(replyTo, "All tasks done.");
             if (config.quitWhenDone) bot.quit();
         } catch (err) {
@@ -503,7 +503,9 @@ function createBot(config, crew, reporter) {
     const everything = () => bot.inventory.slots.slice(1, 46).filter(Boolean); // crafting grid, armor, bag, hotbar, off-hand
     const onBody = (item) => item.slot < 9 || item.slot === 45;
     async function give(player, what, count) {
-        await ctx.goTo(player.position, 2, player.username);
+        const name = player.username;
+        await ctx.travel(() => (bot.players[name]?.entity || player).position, 2, name);
+        player = bot.players[name]?.entity || player;
         ctx.doing(`Handing ${what === "all" ? "everything" : ctx.pretty(what)} to ${player.username}`);
         await bot.lookAt(player.position.offset(0, 1.6, 0), true);
         let left = count;
@@ -874,7 +876,7 @@ function createBot(config, crew, reporter) {
             case "come": {
                 const player = requester && bot.players[requester]?.entity;
                 if (!player) return broadcast ? undefined : say(cantSee());
-                await runExclusive("come", () => ctx.goTo(player.position, 2, requester), `Coming to ${requester}`);
+                await runExclusive("come", () => ctx.travel(() => bot.players[requester]?.entity?.position, 2, requester), `Coming to ${requester}`);
                 break;
             }
             case "deposit": {
@@ -894,7 +896,8 @@ function createBot(config, crew, reporter) {
                 break;
             }
             case "home":
-                if (ctx.home) await ctx.safely(() => ctx.goTo(ctx.home, 2, "home"));
+                if (!ctx.home) break;
+                await runExclusive("go home", () => ctx.travel(ctx.home, 2, "home"), "Going home");
                 break;
             case "quit":
                 bot.quit();

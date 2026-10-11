@@ -241,6 +241,17 @@ function createContext(bot, config) {
             bot.pathfinder.goto(new goals.GoalNear(pos.x, pos.y, pos.z, range))
         );
 
+    // Walking somewhere for a command (come, give, home): a mob that turns up
+    // on the way (or hunger) stops the walk; deal with it and set off again,
+    // as many times as it takes. `where` can be a function, for somewhere that
+    // moves (a player): where they are now, or null when they're out of sight.
+    ctx.travel = (where, range = 2, what = null) =>
+        ctx.act(() => {
+            const pos = typeof where === "function" ? where() : where;
+            if (!pos) throw new Error(`I can't see ${what || "where I was going"}`);
+            return ctx.goTo(pos, range, what);
+        }, 20);
+
     ctx.withTimeout = (promise, ms) => {
         let timer;
         return Promise.race([
