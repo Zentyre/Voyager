@@ -9,8 +9,9 @@
 // edge (on a slab, a mob in the way) it waits there for ever.
 //
 // So: a block placement taking more than 8 s, the same next step for 12 s
-// (not digging), or three failed steps over at least 5 s with no progress
-// in between (nothing dug, not 3 blocks further on), and the step
+// (not digging), three failed steps over at least 5 s with no progress in
+// between (nothing dug, no nearer to where it's going than it's been yet),
+// or 45 s with no progress at all, and the step
 // it kept failing on is left out of its plans for two minutes, and it plans
 // again. The third time in a row with no progress, it gives up on getting
 // there with an error (the job then skips that target, or tries something
@@ -34,6 +35,7 @@ const AVOID_MS = 120000;
 const PLACING_MS = 8000;
 const STEP_MS = 12000;
 const STRIKES = 3;
+const STILL_MS = 45000;
 
 function installUnstuck(ctx, movements) {
     const { bot } = ctx;
@@ -41,7 +43,10 @@ function installUnstuck(ctx, movements) {
 
     // Steps (block positions) to leave out of plans, until when.
     const avoid = new Map();
-    const key = (p) => `${p.x},${p.y},${p.z}`;
+    // (whole blocks: the steps of a path are the middles of blocks, 11.5 64
+    // 0.5, where the plan asks about the block at 11 64 0; kept as they came,
+    // a step left out of plans never was)
+    const key = (p) => `${Math.floor(p.x)},${Math.floor(p.y)},${Math.floor(p.z)}`;
     const avoided = (block) => {
         if (avoid.size === 0 || !block?.position) return 0;
         const until = avoid.get(key(block.position));
@@ -64,6 +69,9 @@ function installUnstuck(ctx, movements) {
         if (g !== goal) {
             strikes = 0;
             failures = [];
+            nearest = Infinity;
+            nearestStep = null;
+            goalAt = Date.now();
         }
         goal = g;
         dynamic = dyn;
@@ -73,11 +81,27 @@ function installUnstuck(ctx, movements) {
     let path = [];
     bot.on("path_update", (r) => (path = r.path || []));
 
-    // Progress: a block dug, or a few blocks further on (towering and
-    // bridging too: a block it puts down shows before the server has said
-    // yes, so that isn't counted by itself).
+    // Progress: a block dug, or nearer to where it's going than it's been
+    // yet (towering and bridging too: a block it puts down shows before the
+    // server has said yes, so that isn't counted by itself). Not just moving
+    // a few blocks: pushed back down a slope by flowing water every time it
+    // tried the ledge at the top, it "moved", and so tried that ledge for
+    // ever.
     let progressAt = 0;
     const progress = () => (progressAt = Date.now());
+    let nearest = Infinity;
+    let goalAt = 0;
+    // The step it was going for when it got nearest: the one it can't make
+    // (the ledge at the top), which a current had pushed it back from by the
+    // time it gave up on it.
+    let nearestStep = null;
+    const left = () => {
+        try {
+            return goal.heuristic(bot.entity.position.floored());
+        } catch (err) {
+            return Infinity;
+        }
+    };
     // What it put down and dug out where, lately (key -> times).
     const touched = new Map();
     const note = (pos, what) => {
@@ -161,7 +185,16 @@ function installUnstuck(ctx, movements) {
             stepKey = null;
             return;
         }
-        if (failures.length && bot.entity.position.distanceTo(failures[0].here) >= 3) progress();
+        if (!dynamic) {
+            const now = left();
+            if (now <= nearest + 0.5 && path[0]) nearestStep = path[0];
+            if (now <= nearest - 2) {
+                nearest = now;
+                progress();
+            } else if (Date.now() - Math.max(progressAt, goalAt, strikeAt) >= STILL_MS && !pf.isMining() && !pf.isBuilding()) {
+                return stuck([path[0]], "not getting any nearer");
+            }
+        }
         if (pf.isBuilding()) {
             placingSince = placingSince ?? Date.now();
             if (Date.now() - placingSince >= PLACING_MS) return stuck([path[0]], "can't put a block down");
@@ -180,7 +213,8 @@ function installUnstuck(ctx, movements) {
         placingSince = null;
         stepSince = Date.now();
         failures = [];
-        for (const s of steps) if (s) avoid.set(key(s), Date.now() + AVOID_MS);
+        for (const s of [...steps, nearestStep]) if (s) avoid.set(key(s), Date.now() + AVOID_MS);
+        nearestStep = null;
         if (!goal || !bot.entity) {
             if (/circles/.test(why)) ctx.log(`Going round in circles (${why.replace(/^going round in circles, /, "")}); leaving that spot alone.`);
             return;

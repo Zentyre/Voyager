@@ -357,11 +357,14 @@ The dashboard map shows them as small squares (hover for which and where).
 
 A watch on the pathfinder for when it stops getting anywhere: a block it's
 putting down (bridging, towering) that takes more than 8 s, the same next
-step for 12 s while not digging, or three failed steps over at least 5 s
-with no progress in between (nothing dug, not 3 blocks further on: pushed
-off them by water, a jump it can't make, a block it can't place or dig).
-The step it kept failing on is left out of its plans for two minutes and it
-tries another way; the third time in a row without getting anywhere it gives
+step for 12 s while not digging, three failed steps over at least 5 s with
+no progress in between (nothing dug, no nearer to where it's going than it's
+been yet: pushed off them by water, a jump it can't make, a block it can't
+place or dig), or 45 s without getting any nearer at all. Being pushed back
+and forth (by flowing water, say) isn't progress, however far it moves. The
+step it kept failing on, and the one it was making for when it got nearest
+(the ledge it can't get up onto against the current), are left out of its
+plans for two minutes and it tries another way, digging one if need be; the third time in a row without getting anywhere it gives
 up on getting there ("I got stuck on the way at ...") and the job skips that
 target or tries something else, rather than hang. A failed step now and
 then among ones that work isn't being stuck, and neither are the few
