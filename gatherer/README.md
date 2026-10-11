@@ -552,7 +552,7 @@ with its progress and what's still to place (what it has and what's in chests).
 | `sprintJump`         | `true`        | Jump while sprinting on straight, flat stretches (faster; uses a little more food) |
 | `attackReach`        | `5`           | Melee reach, eyes to the mob's hitbox (2 to 5.5). A player gets 3; vanilla servers accept up to 6. Lower it if an anti-cheat plugin complains |
 | `fleeHealth`         | `6`           | Back off and eat at or below this health (of 20)                  |
-| `useShield`          | `true`        | Block with a shield while closing in on archers                   |
+| `useShield`          | `true`        | Block with a shield (off hand): arrows coming at it, bows drawn at it, players about to hit it, and while closing in on archers |
 | `useBow`             | `true`        | Use a bow and arrows in fights when it has them                   |
 | `bowRange`           | `24`          | Furthest it likes to shoot from (it closes in beyond this)        |
 | `guardRadius`        | `12`          | Bodyguard: attack hostile mobs this close to the player           |
