@@ -168,8 +168,11 @@ function createBot(config, crew, reporter) {
         // Keep path computation bounded: per-tick budget and a hard timeout.
         const movements = new Movements(bot);
         movements.allowParkour = false;
-        // Swimming is slow and uses air: walk round or bridge a lake when it's not far.
-        movements.liquidCost = 3;
+        // A block of water costs two of walking (swimming at the top is about
+        // half walking speed; its path keeps it at the top). Costing it as
+        // four had it weigh up going round a lake against every block of
+        // shore, which took longer than it's allowed to think on a big one.
+        movements.liquidCost = 1;
         // Never dig through farms, chests, beds, doors, etc. on the way somewhere.
         for (const id of ctx.kb.neverBreakIds()) movements.blocksCantBreak.add(id);
         const modded = bot.registry.blocksByName.modded_block;
@@ -177,27 +180,55 @@ function createBot(config, crew, reporter) {
         // A fence or wall with carpet on top can be jumped onto and walked over
         // like a full block. The pathfinder took carpet for air and a fence for
         // too tall to climb, so it dug through instead.
+        //
+        // And the blocks a plan looks at are kept until something changes:
+        // it asks about each one ten or twenty times (from every step next
+        // to it), and making a block each time was most of its thinking, so
+        // a long way (round or across a lake) ran out of time.
         const getBlock = movements.getBlock.bind(movements);
+        const seen = new Map();
+        let seenSince = 0;
+        const forget = () => seen.clear();
+        bot.on("blockUpdate", forget);
+        bot.on("chunkColumnLoad", forget);
+        bot.on("chunkColumnUnload", forget);
         movements.getBlock = (pos, dx, dy, dz) => {
+            if (!pos) return getBlock(pos, dx, dy, dz);
+            const key = `${pos.x + dx},${pos.y + dy},${pos.z + dz}`;
+            const known = seen.get(key);
+            if (known) return known;
             const b = getBlock(pos, dx, dy, dz);
-            if (pos && movements.fences.has(b.type)) {
+            if (!b.position) return b; // not loaded: not kept
+            if (movements.fences.has(b.type)) {
                 const above = bot.blockAt(b.position.offset(0, 1, 0), false);
                 if (above && movements.carpets.has(above.type)) {
                     b.physical = true;
                     b.height = pos.y + dy + 1;
                 }
             }
+            const now = Date.now();
+            if (now - seenSince > 5000 || seen.size > 300000) {
+                seen.clear();
+                seenSince = now;
+            }
+            seen.set(key, b);
             return b;
         };
         // Nor tunnel under a fence or wall (it tried, a block or two down):
         // that opens a pen as much as breaking it.
+        // (by state id: this runs for every block a plan might dig, and
+        // building block objects for it slowed planning right down)
+        const fenceStates = new Set();
+        for (const id of movements.fences) {
+            const b = bot.registry.blocks[id];
+            if (b) for (let s = b.minStateId; s <= b.maxStateId; s++) fenceStates.add(s);
+        }
+        const above = new Vec3(0, 0, 0);
         const safeToBreak = movements.safeToBreak.bind(movements);
         movements.safeToBreak = (block) => {
-            if (!block?.position) return safeToBreak(block); // not loaded yet: the pathfinder's stand-in (no)
-            for (let dy = 1; dy <= 3; dy++) {
-                const above = bot.blockAt(block.position.offset(0, dy, 0), false);
-                if (above && movements.fences.has(above.type)) return false;
-            }
+            const p = block?.position;
+            if (!p) return safeToBreak(block); // not loaded yet: the pathfinder's stand-in (no)
+            for (let dy = 1; dy <= 3; dy++) if (fenceStates.has(bot.world.getBlockStateId(above.set(p.x, p.y + dy, p.z)))) return false;
             return safeToBreak(block);
         };
         installClimbing(ctx, movements);

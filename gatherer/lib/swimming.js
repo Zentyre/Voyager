@@ -528,7 +528,26 @@ const Move = require("mineflayer-pathfinder/lib/move");
 
 function addWaterExits(movements) {
     const bot = movements.bot;
-    const isWater = (b) => Boolean(b?.name) && (/^(water|bubble_column)$/.test(b.name) || String(b.getProperties?.().waterlogged) === "true");
+    // These run for every block the pathfinder looks at, many thousands a
+    // plan: by state id (a number from the chunk), not building a block
+    // object, or its planning slowed to a crawl and timed out over water.
+    const Block = require("prismarine-block")(bot.registry);
+    const statesOf = (name, keep = () => true) => {
+        const b = bot.registry.blocksByName[name];
+        const out = new Set();
+        if (b) for (let id = b.minStateId; id <= b.maxStateId; id++) if (keep(Block.fromStateId(id, 0))) out.add(id);
+        return out;
+    };
+    const drafts = statesOf("bubble_column", (b) => String(b.getProperties().drag) === "true");
+    const magma = statesOf("magma_block");
+    const watery = new Set([...statesOf("water"), ...statesOf("bubble_column")]);
+    for (const b of bot.registry.blocksArray) {
+        if (b.name === "water" || b.name === "bubble_column" || !(b.states || []).some((s) => s.name === "waterlogged")) continue;
+        for (const id of statesOf(b.name, (blk) => String(blk.getProperties().waterlogged) === "true")) watery.add(id);
+    }
+    const isWater = (b) => b?.stateId !== undefined && watery.has(b.stateId);
+    const at = new Vec3(0, 0, 0);
+    const stateAt = (x, y, z) => bot.world.getBlockStateId(at.set(x, y, z));
 
     // Bubbles are water (it took them for air), and not something to dig.
     const bubbles = bot.registry.blocksByName.bubble_column;
@@ -538,12 +557,25 @@ function addWaterExits(movements) {
     }
     // Never through a magma block's bubbles, nor onto magma (it burns); a
     // block clear of the bubbles if there's another way.
+    // (kept a couple of seconds: a plan asks about the same blocks over and over)
+    const known = new Map();
+    let knownSince = 0;
     const hazard = (block) => {
-        if (!block?.position) return 0;
-        if (isDownDraft(block)) return 100;
-        if (bot.blockAt(block.position.offset(0, -1, 0))?.name === "magma_block") return 100;
-        if (isWater(block) && SIDES.some(([dx, dz]) => isDownDraft(bot.blockAt(block.position.offset(dx, 0, dz))))) return 10;
-        return 0;
+        const p = block?.position;
+        if (!p) return 0;
+        const now = Date.now();
+        if (now - knownSince > 2000 || known.size > 200000) {
+            known.clear();
+            knownSince = now;
+        }
+        const key = `${p.x},${p.y},${p.z}`;
+        let cost = known.get(key);
+        if (cost !== undefined) return cost;
+        if (drafts.has(block.stateId) || magma.has(stateAt(p.x, p.y - 1, p.z))) cost = 100;
+        else if (isWater(block) && SIDES.some(([dx, dz]) => drafts.has(stateAt(p.x + dx, p.y, p.z + dz)))) cost = 10;
+        else cost = 0;
+        known.set(key, cost);
+        return cost;
     };
     movements.exclusionAreasStep.push(hazard);
     // (dropping down: the blocks it falls past are checked, but not where it lands)

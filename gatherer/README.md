@@ -376,6 +376,14 @@ time it happens. A trip that fails while it's in the water ends with it
 getting out first (onto a bank it can climb, or digging the edge of a high
 one down) rather than trying the next thing from the river.
 
+A long way, or across a big lake, can take longer to plan than it's allowed
+(10 s; less is left for each bot when several share a computer). Then it
+walks the best part of the way it found and plans the rest from there, for as
+long as each leg gets it nearer ("Too far to plan all the way at once ..."),
+instead of giving up with "Took to long to decide path". Swimming across
+counts as about twice as far as walking, so it swims a lake rather than
+spend ages planning a way round it.
+
 ## How it learns (no LLM)
 
 It's plain statistics, saved to `memory.json` (one section per server):

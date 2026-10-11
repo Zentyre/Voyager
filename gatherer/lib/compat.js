@@ -78,9 +78,8 @@ function aliasChunkFormat() {
         const major = registryOrVersion?.version?.majorVersion;
         if (major && EXTRA_VERSIONS[major]) {
             const version = { ...registryOrVersion.version, majorVersion: "26.1" };
-            const registry = new Proxy(registryOrVersion, {
-                get: (target, key) => (key === "version" ? version : Reflect.get(target, key)),
-            });
+            // (not a Proxy: the chunk code reads the registry for every block looked up)
+            const registry = Object.create(registryOrVersion, { version: { value: version } });
             return original(registry);
         }
         return original(registryOrVersion);

@@ -204,20 +204,43 @@ function installUnstuck(ctx, movements) {
     // And a trip that failed (no way there, stuck) in the water: out of the
     // water first (onto a bank it can climb, or digging one down, as when
     // idle), rather than try the next thing from in the river.
+    //
+    // And too far (or too much water, or too many bots sharing the computer)
+    // to plan all the way in the time allowed: it walks the best part it
+    // found, and plans again from there, for as long as each leg gets it
+    // nearer.
     const goto = pf.goto.bind(pf);
     pf.goto = async (g, ...rest) => {
-        try {
-            return await goto(g, ...rest);
-        } catch (err) {
-            const gaveUpNow = err?.name === "GoalChanged" && Date.now() - gaveUp < 2000;
-            if (gaveUpNow || err?.name === "NoPath" || err?.name === "Timeout") {
-                if (pf.goal === g) setGoal(null); // (left set, it went on trying in the background)
-                await ctx.getOutOfWater?.({ evenIfBusy: true }).catch(() => {});
+        let best = Infinity;
+        for (let legs = 0; ; legs++) {
+            try {
+                return await goto(g, ...rest);
+            } catch (err) {
+                if (err?.name === "Timeout" && pf.goal === g && legs < 12 && bot.entity) {
+                    const left = () => g.heuristic(bot.entity.position.floored());
+                    if (best === Infinity) best = left();
+                    const t0 = Date.now();
+                    while (pf.goal === g && pf.isMoving() && Date.now() - t0 < 60000) await ctx.wait(250);
+                    if (g.isEnd(bot.entity.position.floored())) return;
+                    if (pf.goal === g && left() < best - 4) {
+                        best = left();
+                        ctx.log(`Too far to plan all the way at once; planning the rest from here (about ${Math.round(best)} to go).`);
+                        continue;
+                    }
+                }
+                await failed(g, err);
             }
-            if (gaveUpNow) throw new Error(`I got stuck on the way at ${ctx.fmt(bot.entity.position.floored())}`);
-            throw err;
         }
     };
+    async function failed(g, err) {
+        const gaveUpNow = err?.name === "GoalChanged" && Date.now() - gaveUp < 2000;
+        if (gaveUpNow || err?.name === "NoPath" || err?.name === "Timeout") {
+            if (pf.goal === g) setGoal(null); // (left set, it went on trying in the background)
+            await ctx.getOutOfWater?.({ evenIfBusy: true }).catch(() => {});
+        }
+        if (gaveUpNow) throw new Error(`I got stuck on the way at ${ctx.fmt(bot.entity.position.floored())}`);
+        throw err;
+    }
 
     ctx.unstuck = { avoided: () => avoid.size };
 }
