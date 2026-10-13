@@ -26,6 +26,8 @@ const ARMOR_RANK = ["leather", "golden", "chainmail", "turtle", "iron", "diamond
 // A player gets none of these: see duel().
 const STYLES = ["crit", "fast", "kite"];
 const RANGED = new Set(["skeleton", "stray", "bogged", "pillager", "witch", "blaze"]);
+// Mobs that fly at you: no walking to them; see skyFight().
+const FLYERS = new Set(["phantom", "vex"]);
 // Melee reach, measured as the game does: from the eyes to the nearest point
 // of the mob's hitbox. A player gets 3; the server accepts up to 6 (3 plus 3
 // blocks of tolerance), so config.attackReach (default 5) lets the bot hit
@@ -286,6 +288,7 @@ function installCombat(ctx) {
     async function attack(mob, { timeoutMs = 30000, maxDistance = Infinity, style = "fast", leash = null, defend = false } = {}) {
         if (style === "bow") return ctx.shoot(mob, { timeoutMs, maxDistance, leash });
         if (mob.type === "player") return duel(mob, { timeoutMs: Math.max(timeoutMs, 60000), maxDistance, leash, defend });
+        if (FLYERS.has(mob.name)) return skyFight(mob, { timeoutMs, leash });
         const before = ctx.interrupts;
         let seen = Date.now();
         let closest = Infinity;
@@ -480,6 +483,55 @@ function installCombat(ctx) {
         } finally {
             raiseShield(false);
             bot.pathfinder.setGoal(null);
+            bot.clearControlStates();
+            ctx.target = null;
+        }
+    }
+
+    // A phantom (or vex): it can't be walked to, it comes to you. It used to
+    // be left alone (circling overhead, it was too far above to count), and
+    // fought like a zombie when it dived (walking after it, then giving it
+    // up as out of reach once it climbed away again). Now it stands its
+    // ground facing it, shield up as it comes in, and hits it when it's in
+    // reach; once it's climbed away (16 blocks off for 2 s) it goes back to
+    // what it was doing, until the next dive.
+    async function skyFight(mob, { timeoutMs, leash }) {
+        const before = ctx.interrupts;
+        const start = Date.now();
+        ctx.target = mob;
+        const weapon = await equipWeapon();
+        const cooldownMs = 1000 / weapon.speed;
+        let lastSwing = 0;
+        let lastD = null;
+        let awaySince = null;
+        bot.pathfinder.setGoal(null);
+        bot.clearControlStates();
+        try {
+            while (mob.isValid && bot.entities[mob.id]) {
+                ctx.checkStop();
+                if (ctx.interrupts !== before) throw new Error("interrupted");
+                if (Date.now() - start > Math.max(timeoutMs, 30000) || offLeash(leash)) return;
+                if (bot.health <= config.fleeHealth) throw new Error(`too hurt to keep fighting the ${mob.name}`);
+                const d = mob.position.distanceTo(bot.entity.position);
+                const coming = lastD !== null && d < lastD - 0.05;
+                lastD = d;
+                if (d > 16) {
+                    awaySince = awaySince ?? Date.now();
+                    if (Date.now() - awaySince > 2000) return; // gone back up: back to work till it dives again
+                } else awaySince = null;
+                await bot.lookAt(aimPoint(mob), true);
+                const ready = Date.now() - lastSwing >= cooldownMs;
+                raiseShield(coming && d < 8 && !(ready && inReach(mob)));
+                if (ready && inReach(mob) && canSee(mob)) {
+                    lowerForSwing();
+                    bot.attack(mob);
+                    lastSwing = Date.now();
+                }
+                await bot.waitForTicks(1);
+            }
+            learn.count("kills");
+        } finally {
+            raiseShield(false);
             bot.clearControlStates();
             ctx.target = null;
         }
@@ -683,6 +735,7 @@ function installCombat(ctx) {
         if (bot.health <= config.fleeHealth) return { style: "flee", context };
         if (bow && distance > 10) return { style: "bow", context }; // not worth walking over
         if (mob.type === "player") return { style: "duel", context }; // (not learned: see duel())
+        if (FLYERS.has(mob.name)) return { style: "sky", context }; // (nor this: see skyFight())
         return { style: learn.choose(context, bow ? [...STYLES, "bow"] : STYLES), context };
     }
 
@@ -700,7 +753,7 @@ function installCombat(ctx) {
             if (err instanceof ctx.Stopped) throw err;
             ctx.log(err.message);
         } finally {
-            if (style !== "flee" && style !== "duel") {
+            if (!["flee", "duel", "sky"].includes(style)) {
                 const died = ctx.deaths > deathsBefore;
                 const damage = Math.max(0, startHealth - bot.health);
                 const score = died ? 0 : won ? Math.max(0.1, 1 - damage / 20) : 0.2;
@@ -784,6 +837,7 @@ function installCombat(ctx) {
     }
 
     Object.assign(ctx, {
+        FLYERS,
         canSee,
         hurtMe,
         reachTo,

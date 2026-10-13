@@ -105,7 +105,7 @@ const EXTRA_LOOT = {
 
 // Hostile mobs the bot should not pick a fight with.
 const DONT_PROVOKE = new Set([
-    "enderman", "zombified_piglin", "piglin", "ghast", "phantom", "warden",
+    "enderman", "zombified_piglin", "piglin", "ghast", "warden",
     "ender_dragon", "wither", "shulker",
 ]);
 const FLEE_FROM = new Set(["creeper", "warden"]);

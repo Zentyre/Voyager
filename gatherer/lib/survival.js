@@ -37,6 +37,9 @@ function installSurvival(ctx) {
         // (left alone after a fight that didn't finish them: not if they hit it again since)
         if ((ignoreUntil.get(entity.id) || 0) > Date.now() && !(player && ctx.hurtMe(entity, 2000))) return false;
         const me = bot.entity.position;
+        // Phantoms (and vexes) fly: one circling high overhead isn't a fight
+        // yet; one diving at it (within 10 blocks, however far above) is.
+        if (ctx.FLYERS.has(entity.name)) return entity.position.distanceTo(me) <= 10 && (ctx.hurtMe(entity) || ctx.canSee(entity));
         // Creepers get noticed sooner (running needs a head start), and from
         // further above or below: one at the edge of the pit the bot is
         // digging in still blows it up.
@@ -347,7 +350,8 @@ function installSurvival(ctx) {
                     fighting = false;
                     // Don't keep chasing something we couldn't reach. Something we ran
                     // from (a creeper) stays a threat, so we run again if it follows.
-                    if (mob.isValid && !ctx.ranFrom?.(mob)) ignoreUntil.set(mob.id, Date.now() + 20000);
+                    // (a phantom that flew off again comes back: not left alone for that)
+                    if (mob.isValid && !ctx.ranFrom?.(mob) && !ctx.FLYERS.has(mob.name)) ignoreUntil.set(mob.id, Date.now() + 20000);
                 }
             }
             // Something we ran from still about (a creeper by the work): keep
