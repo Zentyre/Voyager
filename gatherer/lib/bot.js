@@ -60,24 +60,51 @@ const WORKBENCHES = ["crafting_table", "furnace", "brewing_stand", "smoker", "bl
 // The server's Minecraft version, if the bot can speak it; otherwise the
 // newest version it can (which works when the server runs ViaVersion +
 // ViaBackwards, plugins that let older clients join newer servers).
+//
+// Proxies make this trickier: Velocity reports a range ("Velocity 1.7.2-26.3")
+// and answers a ping with whatever protocol the pinger used. So ping as the
+// newest version the bot knows, and take the newest version on offer, not the
+// first one in the name (which would join a 26.3 network as 26.1 and land in
+// its limbo).
 async function pickVersion(config) {
     const mcData = require("minecraft-data");
     const newest = mineflayer.latestSupportedVersion;
     let server;
     try {
-        server = await require("minecraft-protocol").ping({ host: config.host, port: config.port });
+        server = await require("minecraft-protocol").ping({ host: config.host, port: config.port, version: newest });
     } catch (err) {
         return false; // can't ping; let mineflayer try on its own
     }
-    const name = (String(server?.version?.name || "").match(/\d+\.\d+(\.\d+)?/) || [])[0];
-    const known = name && mcData(name);
-    if (known?.protocol) return false; // supported: auto-detect works
+    const name = String(server?.version?.name || "");
+    const protocolOf = (version) => mcData(version)?.version?.version;
+    // Versions the server mentions, plus the one its protocol number stands for.
+    // (A number that is neither a version the bot knows nor newer than its newest
+    // is the proxy's own version, like Velocity's "3.4.0": skip it.)
+    const offered = (name.match(/\d+\.\d+(\.\d+)?/g) || []).filter(
+        (v) => protocolOf(v) || compareVersions(v, newest) > 0
+    );
+    const byProtocol = mcData.postNettyVersionsByProtocolVersion.pc[server?.version?.protocol];
+    if (byProtocol?.length) offered.push(byProtocol[0].minecraftVersion);
+    if (!offered.length) return false; // nothing to go on: auto-detect
+    const newestOffered = offered.reduce((a, b) => (compareVersions(b, a) > 0 ? b : a));
+    if (protocolOf(newestOffered)) return newestOffered; // one the bot speaks
     console.log(
-        `[${config.username}] This server runs Minecraft ${name || server?.version?.name}, but the bot's ` +
-            `Minecraft library only supports up to ${newest} so far. Connecting as ${newest}: that works if ` +
-            `the server has the ViaVersion and ViaBackwards plugins. Without them it will say "Outdated client".`
+        `[${config.username}] This server runs Minecraft ${newestOffered}, but the bot only supports up to ` +
+            `${newest} so far. Connecting as ${newest}: that works if the server has the ViaVersion and ` +
+            `ViaBackwards plugins. Without them it will say "Outdated client".`
     );
     return newest;
+}
+
+// -1 / 0 / 1 comparing "26.3" with "1.21.4" and the like.
+function compareVersions(a, b) {
+    const pa = a.split(".").map(Number);
+    const pb = b.split(".").map(Number);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pa[i] || 0) - (pb[i] || 0);
+        if (d) return Math.sign(d);
+    }
+    return 0;
 }
 
 // `reporter` (optional) receives this bot's status and log lines for the
