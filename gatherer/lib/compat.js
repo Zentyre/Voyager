@@ -134,6 +134,19 @@ function patchBot(bot) {
     const conv = require("mineflayer/lib/conversions");
     const client = bot._client;
 
+    // Mineflayer answers a resource pack with the pack's id as a UUID object,
+    // which minecraft-protocol encodes as all zeros. A server that requires its
+    // pack then waits forever for an answer about *its* id, holding the bot in
+    // the configuration phase (seen behind Velocity). Send the id as a string.
+    // Any version: this isn't a 26.3 change.
+    const writePacket = client.write.bind(client);
+    client.write = (name, params) => {
+        if (name === "resource_pack_receive" && params?.uuid && typeof params.uuid !== "string") {
+            params = { ...params, uuid: String(params.uuid) };
+        }
+        return writePacket(name, params);
+    };
+
     // The server's list of enchantments, in its order (items name them by
     // number): see listEnchantments.
     client.on("registry_data", (packet) => {
